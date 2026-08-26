@@ -1,8 +1,8 @@
-/* Service Worker - 工时记录 PWA v1.7.1
+/* Service Worker - 工时记录 PWA v1.7.2
    策略：缓存优先（Cache First）仅作用于同源静态资源预缓存清单；
    导航(navigate)请求优先走网络、离线时兜底 index.html，保证 SPA 路由可用；
    非 GET / 带 query 的动态请求透传，不写入缓存，避免干扰下载/分享等动态行为。 */
-const CACHE_NAME = 'worktime-v1.7.1';
+const CACHE_NAME = 'worktime-v1.7.2';
 const ASSETS = [
   './',
   './index.html',
