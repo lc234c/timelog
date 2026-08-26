@@ -1,12 +1,13 @@
 [
   {
     "version": "1.7.3",
-    "date": "2026-08-26",
-    "tag": "修复",
+    "date": "2026-08-27",
+    "tag": "优化",
     "items": [
-      { "type": "修复", "text": "修复报表范围弹窗点「确定」无响应：确认回调加 try/catch 并报错 Toast 提示，分享不支持/报错时自动降级复制文本到剪贴板" },
-      { "type": "修复", "text": "报表遍历日期改用本地 midnight 解析（parseISODate），修复 Safari/iOS 把 YYYY-MM-DD 当 UTC 导致日期偏移一天、统计漏算的问题" },
-      { "type": "新增", "text": "保留 1.7.2「从备份文件导入」功能，与「下载备份文件」形成完整导入/导出闭环" }
+      { "type": "优化", "text": "代码按职责拆分为 storage.js / chart.js / ui.js 三个模块，全局命名空间 window.WT 解耦" },
+      { "type": "优化", "text": "日历渲染改为 DOM 节点复用（池化 cell，月/周视图共享，切换只更新内容与 class）" },
+      { "type": "优化", "text": "补全深色模式 CSS 变量（prefers-color-scheme: dark），让 v1.7.0 宣称的深色适配真正落地" },
+      { "type": "优化", "text": "Service Worker 缓存版本升至 v1.7.3，资源清单同步为拆分后的三个模块文件" }
     ]
   },
   {

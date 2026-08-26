@@ -114,7 +114,6 @@
             <span class="chart-legend-item"><i style="background:var(--success);"></i><span id="chartLegend达标">当日达标(≥6h)</span></span>
         </div>
         <div class="chart-tooltip" id="chartTooltip"></div>
-        <!-- 自定义范围选择（内嵌，不弹窗） -->
         <div class="chart-custom" id="chartCustom" style="display:none;">
             <input type="date" id="chartCustomStart">
             <span>至</span>
@@ -169,7 +168,6 @@
                     <li id="clearDataItem" style="color:#ff3b30;">🗑️ 清空所有数据</li>
                 </ul>
             </div>
-            <!-- 隐藏的文件选择器：用于从备份文件导入 -->
             <input type="file" id="importFileInput" accept=".json,application/json" style="display:none;">
             <div class="settings-group">
                 <div class="settings-group-title">关于</div>
@@ -282,7 +280,10 @@
     </div>
 </div>
 
-<script src="script.js"></script>
+<!-- 模块化加载：顺序为 storage → chart → ui（ui 依赖前两者） -->
+<script src="storage.js"></script>
+<script src="chart.js"></script>
+<script src="ui.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {

@@ -1,112 +1,50 @@
-# ⏱️ 工时记录 PWA
+# 工时记录 PWA — 代码优化说明
 
-个人工时打卡与统计工具，纯前端单页应用，无需后端、无需注册，数据全部存在本地。
+## 本轮优化内容
 
-> 📱 支持 PWA 安装到桌面，体验接近原生 App。
+| 编号 | 优化项 | 文件 | 说明 |
+|---|---|---|---|
+| #1 | `getSmartStepIndex` 简化 | ui.js | 移除多余 `done>=4` 守卫，直接返回 `filter(Boolean).length` |
+| #2 | 当日工时缓存 | storage.js | 新增 `getTodayTotal()` + `_todayCache`，`invalidateMonthCache` 联动清空 |
+| #3 | 图表 Canvas 脏检查 | chart.js | `drawChart` 增加指纹 key，状态/数据未变时跳过全量重绘 |
+| #4 | 日历 DOM 节点复用 | ui.js | `_calCells` 缓存池（≤42），切换月/周只更新内容，不重建节点 |
+| #7 | 按职责拆分为模块 | storage/chart/ui | 单文件 script.js → 3 个职责单一模块 + index.html 顺序引入 |
 
-## ✨ 功能特性
-
-| 功能 | 说明 |
-|---|---|
-| 🕐 **智能打卡** | 一键打卡，自动识别早班/晚班/夜班跨天，支持补卡（默认当前时间） |
-| 📅 **月历视图** | 直观查看每日打卡状态与工时，颜色区分达标/未达标，支持月/周视图切换 |
-| 📊 **工时图表** | 柱状图/趋势线展示每日工时，支持本月/本周/自定义范围，可导出 PNG、长按保存 |
-| 🎯 **达标管理** | 自定义每日目标工时（默认 6h），自动统计达标天数，报表含「是否达标」列 |
-| 🔄 **排班设置** | 支持固定班次与轮班，白/夜班时间段可自定义（设置 → 自定义班别时间段） |
-| 📤 **数据导出/分享** | 报表范围弹窗选择本月/本周/自定义 → 导出 CSV（含 BOM 防乱码）或系统分享/复制 |
-| 💾 **备份闭环** | 下载备份文件（JSON）+ 从备份文件导入 + 复制备份数据到剪贴板，三路冗余 |
-| 🌙 **深色模式** | 自动跟随系统主题（prefers-color-scheme） |
-| 💾 **离线可用** | Service Worker 缓存，断网也能用 |
-| 📦 **PWA** | 可安装到手机/桌面，独立窗口运行 |
-
-## 🚀 快速开始
-
-### 在线使用
-访问部署好的地址即可（推荐 GitHub Pages / Vercel / Netlify，均默认 HTTPS）：
+## 模块结构
 
 ```
-https://你的用户名.github.io/仓库名/
+工时记录/
+├── index.html      # 入口，按 storage → chart → ui 顺序引入
+├── storage.js      # 工具函数 + 数据层（localStorage / 排班 / 统计缓存）
+├── chart.js        # 图表可视化（Canvas / 导出 PNG / 分享 / 达标线）
+├── ui.js           # UI 渲染 + 交互 + 初始化（依赖前两者）
+├── style.css       # 样式（不变）
+├── sw.js           # Service Worker（不变）
+├── manifest.json   # PWA 清单（不变）
+├── changelog.json  # 更新日志（数据驱动）
+└── version.json    # 当前版本号
 ```
 
-### 本地运行
-```bash
-git clone https://github.com/你的用户名/仓库名.git
-cd 仓库名
-python -m http.server 8000   # 或  npx serve
-```
+## 模块契约（全局命名空间 `window.WT`）
 
-浏览器打开 `http://localhost:8000`。
+| 命名空间 | 提供 | 依赖 |
+|---|---|---|
+| `WT.util` | `getLocalDateStr` / `getCurrentTimeStr` / `getDuration` / `getWeekRange` / `pad` | — |
+| `WT.data` | `allData` / `shiftsConfig` / `getTodayTotal` / `getMonthStats` / `invalidateMonthCache` / `saveData` 等 | `WT.util` |
+| `WT.chart` | `drawChart` / `initChart` / `toggleChartType` / `setChartRange` / `exportChartPNG` / `shareChartImage` / `syncChartWithCalView` | `WT.util` |
+| `WT.ui` | `showToast` / `closeSettings` / `renderCalendar` / `updateStats` / `init` 等 | `WT.util` + `WT.data` + `WT.chart` |
 
-> ⚠️ 不能直接双击 `index.html` 用 `file://` 打开：PWA / `fetch` 加载 `changelog.json` / `version.json` 需要 HTTP 协议；`file://` 下更新日志会回退到内置兜底数据，功能基本可用但不完整。
+## 加载顺序（重要）
 
-### 安装到手机/桌面
-浏览器打开地址 → 地址栏右侧出现「安装」图标（📥）或菜单选「添加到主屏幕」→ 确认即可。
+`index.html` 中必须按 **storage.js → chart.js → ui.js** 顺序引入：
+- `storage.js` 先注册 `WT.util` 与 `WT.data`（无外部依赖）
+- `chart.js` 注册 `WT.chart`（依赖 `WT.util`）
+- `ui.js` 最后注册 `WT.ui` 并绑定 `DOMContentLoaded` 初始化（依赖前三者）
 
-## 📋 更新日志
+`chart.js` 对 `WT.ui` 仅**软依赖**（`WT.ui && WT.ui.showToast`），避免循环引用；`ui.js` 通过 `WT.chart.*` 调用图表，解耦彻底。
 
-### v1.7.3（2026-08-27）· 修复 ⭐ 当前版本
-- 🔧 **修复报表范围弹窗点「确定」无响应**：确认回调加 `try/catch`，错误以 Toast 提示而非静默失败
-- 🔧 报表日期遍历统一用本地 midnight（`parseISODate`），修复 Safari/iOS 下 `YYYY-MM-DD` 被解析为 UTC 导致日期偏移、统计漏算
-- 🔧 分享报表在 standalone PWA / 不支持 Web Share 环境自动降级为复制文本到剪贴板
+## 部署提示
 
-### v1.7.2（2026-08-27）· 新增
-- 🆕 新增「从备份文件导入」（设置 → 数据管理），与「下载备份文件」形成完整数据闭环
-
-### v1.7.1（2026-08-26）· 修复
-- 🔧 修复移动端 PWA standalone 模式下下载/分享/导出失效（备份、报表 CSV、图表 PNG）
-- 🔧 Service Worker 改为导航网络优先 + 静态资源缓存优先
-
-### v1.7.0（2026-08-26）· 新增
-- 🆕 图表长按保存 PNG · 补卡默认当前时间 · 打卡按钮进度变色 · 深色模式 · PWA 封装
-
-### v1.6.0（2026-08-26）· 新增
-- 🆕 自定义白/夜班时间段
-
-### v1.4.0（2026-08-26）· 优化
-- 🔄 报表模块重构，新增「关于/更新记录」入口与检查更新
-
-### v1.0.0（2026-07-29）· 发布
-- 🎉 首发：日历打卡、白/夜排班、补卡、月度统计、备份导入
-
-## 🛠️ 技术栈
-
-- **前端**：纯 HTML + CSS + JavaScript（无框架依赖）
-- **存储**：localStorage
-- **PWA**：Service Worker + Web App Manifest
-- **图表**：Canvas 原生绘制
-- **部署**：GitHub Pages / 任意静态托管
-
-## 📁 项目结构
-
-```
-.
-├── index.html          # 主页面
-├── style.css           # 样式（含深色模式媒体查询）
-├── script.js           # 核心逻辑（v1.7.3）
-├── changelog.json      # 更新日志（远端，可被 fetch 覆盖）
-├── version.json        # 版本信息（检查更新比对用）
-├── manifest.json       # PWA 清单
-├── sw.js               # Service Worker（缓存 v1.7.3）
-├── icon-192.png        # PWA 图标 192×192
-├── icon-512.png        # PWA 图标 512×512
-├── README.md           # 本文件
-└── .nojekyll           # 禁用 GitHub Pages 的 Jekyll（避免忽略下划线文件）
-```
-
-## ⚠️ 注意事项
-
-| 事项 | 说明 |
-|---|---|
-| 数据仅存本地 | 清除浏览器数据会丢失所有打卡记录，**建议定期「下载备份文件」** |
-| 代码更新需 bump 缓存 | 修改业务代码后，记得更新 `sw.js` 中 `CACHE_NAME` 版本号（当前 `worktime-v1.7.3`） |
-| 部署后首次访问 | 建议 **hard-refresh**（`Ctrl+Shift+R` / 清 PWA 缓存重装），让新 SW 生效 |
-| iOS 支持 | iOS 16.4+ 支持 PWA 安装；standalone 下 Web Share 可能受限，已自动降级为复制文本 |
-| 报表无响应排查 | 若仍点确定无反应，打开浏览器控制台（F12 / 远程调试）查看红色报错，通常是范围未选或数据为空（会有 Toast 提示） |
-
-## 📄 License
-
-MIT — 随便用，随便改 😊
-
----
-
-⭐ 如果这个项目对你有帮助，欢迎点个 Star！
+- 所有静态资源（含三个 `.js`）需置于同一目录，由 `sw.js` 预缓存清单统一缓存
+- 升级版本时同步更新 `version.json` 的 `version` 字段与 `sw.js` 的 `CACHE_NAME`
+- 建议通过 `http(s)` 或本地静态服务器（如 `python -m http.server`）打开，避免 `file://` 下 `localStorage` / `fetch` 受限

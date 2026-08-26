@@ -4,6 +4,63 @@
     --bg:#f2f2f7; --card:#fff; --text:#1c1c1e; --text-secondary:#8e8e93;
     --border:#e5e5ea; --shadow:0 2px 12px rgba(0,0,0,.08); --radius:14px;
 }
+/* 深色模式：跟随系统 prefers-color-scheme，零手动开关（v1.7.0 适配，v1.7.3 补全变量落地） */
+@media (prefers-color-scheme: dark){
+    :root{
+        --primary:#4a90e2; --primary-dark:#5fa3f0;
+        --success:#30d158; --warning:#ff9f0a; --danger:#ff453a;
+        --bg:#1c1c1e; --card:#2c2c2e; --text:#f2f2f7; --text-secondary:#a8a8ae;
+        --border:#3a3a3c; --shadow:0 2px 12px rgba(0,0,0,.35); --radius:14px;
+    }
+    body{background:var(--bg);color:var(--text);}
+    .app{background:var(--bg);}
+    /* 顶部栏在深色下保持品牌蓝，文字白 */
+    .app-header{background:var(--primary);color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.45);}
+    /* 日历：暗色下选中/今日/完成态对比度保持 */
+    .cal-date.dim{color:#636366;}
+    .cal-date.today{background:rgba(74,144,226,.25);color:var(--primary);}
+    .cal-date.selected{background:var(--primary);color:#fff;box-shadow:0 2px 8px rgba(74,144,226,.5);}
+    .cal-date.cal-done{background:rgba(48,209,88,.18);color:var(--success);}
+    .cal-date.cal-partial{background:rgba(255,159,10,.16);color:var(--warning);}
+    .cal-date.has-record::after{background:var(--primary);}
+    .cal-navs span:active{background:rgba(74,144,226,.25);}
+    .cal-navs .collapse-btn{color:var(--primary);background:rgba(74,144,226,.18);}
+    .cal-navs .collapse-btn:active{background:rgba(74,144,226,.32);}
+    /* 卡片/弹窗底色 */
+    .calendar-card,.sel-date-info,.stats-card,.month-stats,.chart-card,
+    .settings-group .settings-list,.shift-block,.about-app,.changelog-item,
+    .history-item,.modal-content{background:var(--card);}
+    .modal-content{box-shadow:0 -4px 24px rgba(0,0,0,.4);}
+    /* 输入框/选择器 */
+    #shiftSelect,.makeup-form input,.makeup-form select,.history-filters input[type="date"],
+    .rpt-range-custom input[type="date"],.chart-custom input[type="date"],
+    .shift-period input[type="time"]{background:#3a3a3c;color:var(--text);border-color:var(--border);}
+    /* 统计/历史 */
+    .stats-header:active{background:#3a3a3c;}
+    .detail-row{border-bottom-color:#3a3a3c;}
+    .history-time.done{color:var(--success);}
+    .history-time.pending{color:#636366;}
+    /* 设置项 */
+    .settings-list li:active{background:#3a3a3c;}
+    .settings-switch{background:#3a3a3c;}
+    .settings-switch.on{background:var(--primary);}
+    .settings-val{background:rgba(74,144,226,.2);color:var(--primary);}
+    /* 按钮 */
+    #punchBtn{box-shadow:0 4px 16px rgba(74,144,226,.45);}
+    .action-btn{box-shadow:0 2px 10px rgba(0,0,0,.3);}
+    /* Toast */
+    .app-toast{background:rgba(0,0,0,.85);}
+    .app-toast.err{background:rgba(255,69,58,.9);}
+    /* 图表空状态 */
+    .chart-empty{background:repeating-linear-gradient(45deg,#2c2c2e,#2c2c2e 10px,#1c1c1e 10px,#1c1c1e 20px);color:var(--text-secondary);}
+    /* 班别设置/复制兜底 */
+    .shift-settings-tip{background:rgba(74,144,226,.14);}
+    .shift-settings-err{background:rgba(255,69,58,.14);}
+    #copyFallbackText{background:#3a3a3c;color:var(--text);border-color:var(--border);}
+    /* 关于/更新记录 */
+    .about-app{border-bottom-color:var(--border);}
+    .changelog-items li::before{background:var(--primary);}
+}
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;-webkit-tap-highlight-color:transparent;}
 .app{max-width:480px;margin:0 auto;min-height:100vh;background:var(--bg);padding-bottom:30px;}
