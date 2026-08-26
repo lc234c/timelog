@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>工时记录 · 诊断页</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:16px;background:#f5f5f7;color:#222;}
+  h2{font-size:16px;margin:18px 0 8px;color:#0a4d8c;}
+  .card{background:#fff;border-radius:12px;padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:12px;}
+  .row{display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:4px 0;border-bottom:1px dashed #eee;}
+  .row:last-child{border:0;}
+  .k{color:#666;}
+  .v{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all;text-align:right;}
+  .ok{color:#0a8a3a;font-weight:700;} .bad{color:#c0392b;font-weight:700;}
+  pre{background:#1c1c1e;color:#f2f2f7;padding:10px;border-radius:8px;font-size:11px;max-height:180px;overflow:auto;white-space:pre-wrap;word-break:break-all;}
+  .tip{font-size:12px;color:#555;line-height:1.6;}
+  button{display:block;width:100%;margin:6px 0;padding:10px;border:0;border-radius:10px;background:#2196F3;color:#fff;font-size:14px;font-weight:600;}
+  button.alt{background:#e0e0e0;color:#333;}
+</style>
+</head>
+<body>
+<h2>工时记录 PWA · 运行诊断</h2>
+<div class="card tip">本页用于排查“页面能打开但按钮点不开”的问题。请在<strong>出问题的同一设备/浏览器</strong>上打开此页（与 index.html 同目录），查看下方结果。</div>
+
+<div class="card">
+  <div class="row"><span class="k">页面地址 (location)</span><span class="v" id="r-loc"></span></div>
+  <div class="row"><span class="k">协议</span><span class="v" id="r-proto"></span></div>
+  <div class="row"><span class="k">是否 localhost / 127.0.0.1</span><span class="v" id="r-local"></span></div>
+  <div class="row"><span class="k">Service Worker 支持</span><span class="v" id="r-swsup"></span></div>
+  <div class="row"><span class="k">当前已注册 SW</span><span class="v" id="r-swreg"></span></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">模块注册检查 (window.WT)</h2>
+  <div class="row"><span class="k">WT.util</span><span class="v" id="m-util"></span></div>
+  <div class="row"><span class="k">WT.data</span><span class="v" id="m-data"></span></div>
+  <div class="row"><span class="k">WT.chart</span><span class="v" id="m-chart"></span></div>
+  <div class="row"><span class="k">WT.ui</span><span class="v" id="m-ui"></span></div>
+  <div class="row"><span class="k">WT.ui.init</span><span class="v" id="m-init"></span></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">资源加载检查</h2>
+  <div class="row"><span class="k">storage.js</span><span class="v" id="l-storage"></span></div>
+  <div class="row"><span class="k">chart.js</span><span class="v" id="l-chart"></span></div>
+  <div class="row"><span class="k">ui.js</span><span class="v" id="l-ui"></span></div>
+  <div class="row"><span class="k">style.css</span><span class="v" id="l-style"></span></div>
+  <div class="row"><span class="k">manifest.json</span><span class="v" id="l-manifest"></span></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">报错捕获 (window.onerror / unhandledrejection)</h2>
+  <pre id="r-err">（暂无捕获到报错）</pre>
+</div>
+
+<div class="card tip">
+  <strong>快速判断：</strong><br>
+  • 任一模块显示 <span class="bad">undefined</span> → JS 未执行/加载失败，看“资源加载检查”与“报错捕获”。<br>
+  • 协议为 <span class="bad">file:</span> → SW 与 fetch 受限，须用 localhost 或 HTTPS(GitHub Pages)。<br>
+  • 资源 404 → 文件名/路径不对（确认三个 .js 与 style.css 在同目录）。<br>
+  • 报错含 <span class="bad">Cannot read properties of undefined</span> → 模块加载顺序或 init 时机问题。
+</div>
+
+<button id="b-init">手动调用 WT.ui.init()</button>
+<button class="alt" id="b-reload">硬刷新 (Ctrl+Shift+R 等效)</button>
+
+<script>
+function set(id,cls,text){var e=document.getElementById(id);e.className=cls;e.textContent=text;}
+function mark(bad){return bad?'<span class="bad">':'<span class="ok">';}
+var proto=location.protocol;
+set('r-loc','','location.href');
+document.getElementById('r-loc').textContent=location.href;
+set('r-proto','',proto);
+set('r-local','',/^https?:$/.test(proto)?(location.hostname==='localhost'||location.hostname==='127.0.0.1'?'<span class="ok">是</span>':'<span class="bad">否（需 HTTPS/GitHub Pages 或 localhost）</span>'):'<span class="bad">file: 协议，SW 不可用</span>');
+set('r-swsup','',('serviceWorker' in navigator)?'<span class="ok">支持</span>':'<span class="bad">不支持</span>');
+navigator.serviceWorker.getRegistration().then(function(r){set('r-swreg','',r?'<span class="ok">已注册 ('+r.scope+')</span>':'<span class="bad">未注册</span>');}).catch(function(e){set('r-swreg','','<span class="bad">查询失败</span>');});
+
+function checkMod(){var w=window.WT||{};
+  set('m-util','',w.util?'<span class="ok">已注册</span>':'<span class="bad">undefined</span>');
+  set('m-data','',w.data?'<span class="ok">已注册</span>':'<span class="bad">undefined</span>');
+  set('m-chart','',w.chart?'<span class="ok">已注册</span>':'<span class="bad">undefined</span>');
+  set('m-ui','',w.ui?'<span class="ok">已注册</span>':'<span class="bad">undefined</span>');
+  set('m-init','',(w.ui&&typeof w.ui.init==='function')?'<span class="ok">function</span>':'<span class="bad">undefined</span>');
+}
+checkMod();
+
+function probe(url,id){fetch(url,{cache:'no-cache'}).then(function(r){set(id,'',r.ok?'<span class="ok">'+r.status+' OK</span>':'<span class="bad">'+r.status+' '+r.statusText+'</span>');}).catch(function(e){set(id,'','<span class="bad">加载失败/网络错误</span>');});}
+probe('storage.js','l-storage');probe('chart.js','l-chart');probe('ui.js','l-ui');probe('style.css','l-style');probe('manifest.json','l-manifest');
+
+var errBox=document.getElementById('r-err'),errs=[];
+function pushErr(m){errs.push(m);errBox.textContent=errs.join('\n');}
+window.addEventListener('error',function(e){pushErr('[error] '+(e.error&&e.error.stack?e.error.stack:e.message||'未知'));});
+window.addEventListener('unhandledrejection',function(e){pushErr('[unhandledrejection] '+(e.reason&&e.reason.stack?e.reason.stack:e.reason));});
+
+document.getElementById('b-init').addEventListener('click',function(){try{var w=window.WT;if(w&&w.ui&&typeof w.ui.init==='function'){w.ui.init();pushErr('[diag] 已手动调用 WT.ui.init()');}else pushErr('[diag] 无法调用：WT.ui.init 不存在（模块未注册）');}catch(e){pushErr('[diag] init 抛出异常：'+(e.stack||e.message));}});
+document.getElementById('b-reload').addEventListener('click',function(){location.reload(true);});
+</script>
+</body>
+</html>
