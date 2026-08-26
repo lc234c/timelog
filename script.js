@@ -286,10 +286,14 @@ function openRecordHistory() { closeSettings(); var m = document.getElementById(
 function closeHistory() { document.getElementById('historyModal').classList.remove('show'); }
 
 /* ============ 关于 / 更新记录（数据驱动，便于后续追加） ============ */
-var APP_VERSION = '1.7.1';
+var APP_VERSION = '1.7.2';
 /* 更新日志：优先从 changelog.json 异步加载（不改 JS 即可更新）；
    若 fetch 失败（如 file:// 打开被拦截），回退到下方内存兜底副本。 */
 var CHANGELOG = [
+    { version: '1.7.2', date: '2026-08-26', tag: '新增', items: [
+        '新增「从备份文件导入」：选择本地下载的备份 .json 即可一键恢复，与下载备份闭环',
+        '原粘贴导入保留为高级兜底，导入前显示记录数并二次确认'
+    ]},
     { version: '1.7.1', date: '2026-08-26', tag: '修复', items: [
         '修复 PWA/GitHub Pages/移动端下备份导出、报表 CSV、图表 PNG 下载无响应',
         'Service Worker 改为导航网络优先，动态请求透传，避免干扰下载与分享'
@@ -409,7 +413,42 @@ function copyData() {
         navigator.clipboard.writeText(ds).then(function () { closeSettings(); showToast("📋 备份数据已复制到剪贴板"); }).catch(function () { showFallback(); });
     } else { showFallback(); }
 }
-function openImportModal() { closeSettings(); var v = prompt("请粘贴之前备份的 JSON 数据："); if (!v) return; try { var id = JSON.parse(v); if (confirm("导入将覆盖当前所有数据，确定继续吗？")) { allData = id; invalidateMonthCache(); saveData(); status = getCurrentData().status; renderCalendar(); updateSelectedLabel(); updateStats(); drawChart(); showToast("✅ 数据导入成功"); } } catch (e) { showToast("❌ 导入失败：格式不正确", true); } }
+/* 从备份文件导入：点击隐藏 file input 选择本地下载的备份 .json，
+   读取并解析后二次确认再覆盖当前数据，与「下载备份文件」形成闭环。 */
+function openImportFromFile() {
+    closeSettings();
+    var inp = document.getElementById('importFileInput');
+    if (!inp) { openImportModal(); return; } /* 兜底：无 file input 时走粘贴导入 */
+    inp.value = ''; /* 允许重复选择同一文件 */
+    if (inp._bound) { inp.click(); return; }
+    inp._bound = true;
+    inp.addEventListener('change', function () {
+        var f = inp.files && inp.files[0]; if (!f) return;
+        var reader = new FileReader();
+        reader.onload = function (ev) {
+            var text = ev.target && ev.target.result; if (!text) { showToast("❌ 读取文件为空", true); return; }
+            try {
+                var id = JSON.parse(text);
+                if (!id || typeof id !== 'object' || Array.isArray(id)) { showToast("❌ 备份格式不正确（应为 JSON 对象）", true); return; }
+                var dayCount = Object.keys(id).length;
+                if (!confirm("导入将用该备份覆盖当前所有数据（共 " + dayCount + " 条日期记录），确定继续吗？")) return;
+                allData = id; invalidateMonthCache(); saveData();
+                /* 同步当前选中日期引用 + 排班类型 */
+                var cd = getCurrentData(); status = cd.status; currentShiftType = cd.shiftType || currentShiftType;
+                els.shiftSelect.value = currentShiftType;
+                (calDefaultExpanded ? renderCalendar() : renderWeekView());
+                document.getElementById('collapseCal').innerText = calDefaultExpanded ? '▽' : '△';
+                syncChartWithCalView(calDefaultExpanded); updateSelectedLabel(); updateButtonText(); updateStats(); drawChart();
+                showToast("✅ 已从备份文件导入 " + dayCount + " 条记录");
+            } catch (e) { showToast("❌ 导入失败：文件不是合法 JSON", true); }
+        };
+        reader.onerror = function () { showToast("❌ 读取文件失败", true); };
+        reader.readAsText(f);
+    });
+    inp.click();
+}
+/* 粘贴导入（高级兜底）：手动粘贴备份 JSON 文本导入 */
+function openImportModal() { closeSettings(); var v = prompt("请粘贴之前备份的 JSON 数据："); if (!v) return; try { var id = JSON.parse(v); if (!id || typeof id !== 'object' || Array.isArray(id)) { showToast("❌ 备份格式不正确", true); return; } var dayCount = Object.keys(id).length; if (confirm("导入将覆盖当前所有数据（共 " + dayCount + " 条日期记录），确定继续吗？")) { allData = id; invalidateMonthCache(); saveData(); var cd = getCurrentData(); status = cd.status; currentShiftType = cd.shiftType || currentShiftType; els.shiftSelect.value = currentShiftType; (calDefaultExpanded ? renderCalendar() : renderWeekView()); document.getElementById('collapseCal').innerText = calDefaultExpanded ? '▽' : '△'; syncChartWithCalView(calDefaultExpanded); updateSelectedLabel(); updateButtonText(); updateStats(); drawChart(); showToast("✅ 数据导入成功（" + dayCount + " 条）"); } } catch (e) { showToast("❌ 导入失败：格式不正确", true); } }
 function clearAllData() { if (!confirm("【警告】将删除本地所有打卡记录！\n建议先备份。是否继续？")) return; if (!confirm("最后确认：真的清空所有数据吗？不可撤销！")) return; allData = {}; if (storageAvailable) localStorage.removeItem('attendanceData'); invalidateMonthCache(); status = getCurrentData().status; saveData(); renderCalendar(); updateSelectedLabel(); updateStats(); drawChart(); showToast("所有数据已清空"); closeSettings(); }
 
 /* ============ 补卡 ============ */
@@ -722,6 +761,7 @@ document.getElementById('closeHistoryBtn').addEventListener('click', closeHistor
 document.getElementById('historyQueryBtn').addEventListener('click', renderHistoryList);
 document.getElementById('downloadBackupItem').addEventListener('click', downloadBackup);
 document.getElementById('copyDataItem').addEventListener('click', copyData);
+document.getElementById('importFileItem').addEventListener('click', openImportFromFile);
 document.getElementById('openImportItem').addEventListener('click', openImportModal);
 document.getElementById('clearDataItem').addEventListener('click', clearAllData);
 /* 导出/分享报表入口已移至设置弹窗 */
