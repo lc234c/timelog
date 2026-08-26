@@ -17,6 +17,7 @@ function getWeekRange(dateObj) {
     return { mon: mon, sun: sun };
 }
 function pad(n) { return String(n).padStart(2, '0'); }
+function parseISODate(s) { if (!s) return new Date(NaN); var p = String(s).split('-'); if (p.length !== 3) return new Date(s); return new Date(+p[0], +p[1] - 1, +p[2]); }
 
 /* ============ 数据层 ============ */
 var allData = loadData(), storageAvailable = true;
@@ -286,13 +287,16 @@ function openRecordHistory() { closeSettings(); var m = document.getElementById(
 function closeHistory() { document.getElementById('historyModal').classList.remove('show'); }
 
 /* ============ 关于 / 更新记录（数据驱动，便于后续追加） ============ */
-var APP_VERSION = '1.7.2';
+var APP_VERSION = '1.7.3';
 /* 更新日志：优先从 changelog.json 异步加载（不改 JS 即可更新）；
    若 fetch 失败（如 file:// 打开被拦截），回退到下方内存兜底副本。 */
 var CHANGELOG = [
-    { version: '1.7.2', date: '2026-08-26', tag: '新增', items: [
-        '新增「从备份文件导入」：选择本地下载的备份 .json 即可一键恢复，与下载备份闭环',
-        '原粘贴导入保留为高级兜底，导入前显示记录数并二次确认'
+    { version: '1.7.3', date: '2026-08-27', tag: '修复', items: [
+        '修复报表范围弹窗点「确定」无响应（加 try/catch、日期统一本地 midnight、分享降级复制）',
+        '导出/分享报表在 standalone PWA 与 Safari 下更稳定，错误会以 Toast 提示而非静默失败'
+    ]},
+    { version: '1.7.2', date: '2026-08-27', tag: '新增', items: [
+        '新增「从备份文件导入」（设置→数据管理），与「下载备份文件」形成完整闭环'
     ]},
     { version: '1.7.1', date: '2026-08-26', tag: '修复', items: [
         '修复 PWA/GitHub Pages/移动端下备份导出、报表 CSV、图表 PNG 下载无响应',
@@ -413,42 +417,7 @@ function copyData() {
         navigator.clipboard.writeText(ds).then(function () { closeSettings(); showToast("📋 备份数据已复制到剪贴板"); }).catch(function () { showFallback(); });
     } else { showFallback(); }
 }
-/* 从备份文件导入：点击隐藏 file input 选择本地下载的备份 .json，
-   读取并解析后二次确认再覆盖当前数据，与「下载备份文件」形成闭环。 */
-function openImportFromFile() {
-    closeSettings();
-    var inp = document.getElementById('importFileInput');
-    if (!inp) { openImportModal(); return; } /* 兜底：无 file input 时走粘贴导入 */
-    inp.value = ''; /* 允许重复选择同一文件 */
-    if (inp._bound) { inp.click(); return; }
-    inp._bound = true;
-    inp.addEventListener('change', function () {
-        var f = inp.files && inp.files[0]; if (!f) return;
-        var reader = new FileReader();
-        reader.onload = function (ev) {
-            var text = ev.target && ev.target.result; if (!text) { showToast("❌ 读取文件为空", true); return; }
-            try {
-                var id = JSON.parse(text);
-                if (!id || typeof id !== 'object' || Array.isArray(id)) { showToast("❌ 备份格式不正确（应为 JSON 对象）", true); return; }
-                var dayCount = Object.keys(id).length;
-                if (!confirm("导入将用该备份覆盖当前所有数据（共 " + dayCount + " 条日期记录），确定继续吗？")) return;
-                allData = id; invalidateMonthCache(); saveData();
-                /* 同步当前选中日期引用 + 排班类型 */
-                var cd = getCurrentData(); status = cd.status; currentShiftType = cd.shiftType || currentShiftType;
-                els.shiftSelect.value = currentShiftType;
-                (calDefaultExpanded ? renderCalendar() : renderWeekView());
-                document.getElementById('collapseCal').innerText = calDefaultExpanded ? '▽' : '△';
-                syncChartWithCalView(calDefaultExpanded); updateSelectedLabel(); updateButtonText(); updateStats(); drawChart();
-                showToast("✅ 已从备份文件导入 " + dayCount + " 条记录");
-            } catch (e) { showToast("❌ 导入失败：文件不是合法 JSON", true); }
-        };
-        reader.onerror = function () { showToast("❌ 读取文件失败", true); };
-        reader.readAsText(f);
-    });
-    inp.click();
-}
-/* 粘贴导入（高级兜底）：手动粘贴备份 JSON 文本导入 */
-function openImportModal() { closeSettings(); var v = prompt("请粘贴之前备份的 JSON 数据："); if (!v) return; try { var id = JSON.parse(v); if (!id || typeof id !== 'object' || Array.isArray(id)) { showToast("❌ 备份格式不正确", true); return; } var dayCount = Object.keys(id).length; if (confirm("导入将覆盖当前所有数据（共 " + dayCount + " 条日期记录），确定继续吗？")) { allData = id; invalidateMonthCache(); saveData(); var cd = getCurrentData(); status = cd.status; currentShiftType = cd.shiftType || currentShiftType; els.shiftSelect.value = currentShiftType; (calDefaultExpanded ? renderCalendar() : renderWeekView()); document.getElementById('collapseCal').innerText = calDefaultExpanded ? '▽' : '△'; syncChartWithCalView(calDefaultExpanded); updateSelectedLabel(); updateButtonText(); updateStats(); drawChart(); showToast("✅ 数据导入成功（" + dayCount + " 条）"); } } catch (e) { showToast("❌ 导入失败：格式不正确", true); } }
+function openImportModal() { closeSettings(); var v = prompt("请粘贴之前备份的 JSON 数据："); if (!v) return; try { var id = JSON.parse(v); if (confirm("导入将覆盖当前所有数据，确定继续吗？")) { allData = id; invalidateMonthCache(); saveData(); status = getCurrentData().status; renderCalendar(); updateSelectedLabel(); updateStats(); drawChart(); showToast("✅ 数据导入成功"); } } catch (e) { showToast("❌ 导入失败：格式不正确", true); } }
 function clearAllData() { if (!confirm("【警告】将删除本地所有打卡记录！\n建议先备份。是否继续？")) return; if (!confirm("最后确认：真的清空所有数据吗？不可撤销！")) return; allData = {}; if (storageAvailable) localStorage.removeItem('attendanceData'); invalidateMonthCache(); status = getCurrentData().status; saveData(); renderCalendar(); updateSelectedLabel(); updateStats(); drawChart(); showToast("所有数据已清空"); closeSettings(); }
 
 /* ============ 补卡 ============ */
@@ -713,7 +682,7 @@ function openReportRangeModal(mode) { var m = document.getElementById('reportRan
 function closeReportRangeModal() { document.getElementById('reportRangeModal').classList.remove('show'); }
 function getReportRange(op) {
     var t = new Date(), y = t.getFullYear(), m = t.getMonth();
-    if (op === 'month') return { start: getLocalDateStr(new Date(y, m, 1)), end: getLocalDateStr(new Date(y, m + 1, 0)), label: '本月' };
+    if (op === 'month') { var ms = new Date(y, m, 1), me = new Date(y, m + 1, 0); return { start: getLocalDateStr(ms), end: getLocalDateStr(me), label: '本月' }; }
     if (op === 'week') { var w = t.getDay(); if (w === 0) w = 7; var mn = new Date(t); mn.setDate(t.getDate() - w + 1); var su = new Date(mn); su.setDate(mn.getDate() + 6); return { start: getLocalDateStr(mn), end: getLocalDateStr(su), label: '本周' }; }
     var s = document.getElementById('rptRangeStart').value, e = document.getElementById('rptRangeEnd').value;
     if (!s || !e) { showToast("请选择完整起止日期", true); return null; } if (s > e) { showToast("开始日期不能晚于结束日期", true); return null; }
@@ -722,7 +691,8 @@ function getReportRange(op) {
 function buildReport(range) {
     var达标阈值 = chartTargetHours;
     var hd = ['日期', '排班', '上午上班', '上午下班', '下午上班', '下午下班', '上午工时', '下午工时', '当日总工时', '是否达标(≥' + 达标阈值 + 'h)'], rows = [hd], lines = ['📊 工时报表 ' + range.start + ' ~ ' + range.end + '  (达标线 ' + 达标阈值 + 'h)', ''], mt = 0, md = 0,达标天数 = 0;
-    for (var d = new Date(range.start); d <= new Date(range.end); d.setDate(d.getDate() + 1)) {
+    var cur = parseISODate(range.start), end = parseISODate(range.end);
+    for (var d = new Date(cur); d <= end; d.setDate(d.getDate() + 1)) {
         var ds = getLocalDateStr(d), dy = allData[ds]; if (!dy) continue; var st = dy.status; if (!st.s1 && !st.e1 && !st.s2 && !st.e2) continue;
         var dt = dy.shiftType || 'day', d1 = getDuration(st.s1, st.e1), d2 = getDuration(st.s2, st.e2), tot = (d1 + d2), totStr = tot.toFixed(2); mt += tot; md++;
         var达标 = tot >= 达标阈值; if (达标) 达标天数++;
@@ -761,7 +731,6 @@ document.getElementById('closeHistoryBtn').addEventListener('click', closeHistor
 document.getElementById('historyQueryBtn').addEventListener('click', renderHistoryList);
 document.getElementById('downloadBackupItem').addEventListener('click', downloadBackup);
 document.getElementById('copyDataItem').addEventListener('click', copyData);
-document.getElementById('importFileItem').addEventListener('click', openImportFromFile);
 document.getElementById('openImportItem').addEventListener('click', openImportModal);
 document.getElementById('clearDataItem').addEventListener('click', clearAllData);
 /* 导出/分享报表入口已移至设置弹窗 */
@@ -803,10 +772,29 @@ document.querySelectorAll('.rpt-option').forEach(function (opt) { opt.addEventLi
 document.getElementById('rptRangeCancel').addEventListener('click', closeReportRangeModal);
 document.getElementById('rptRangeCancel2').addEventListener('click', closeReportRangeModal);
 document.getElementById('rptRangeConfirm').addEventListener('click', function () {
-    var m = document.getElementById('reportRangeModal'), mode = m.dataset.mode, op = document.querySelector('.rpt-option.selected').dataset.val, range = getReportRange(op); if (!range) return; closeReportRangeModal();
-    var res = buildReport(range); if (!res) { showToast("该范围内暂无打卡记录", true); return; }
-    if (mode === 'export') { var csv = res.rows.map(function (r2) { return r2.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(','); }).join('\r\n'), fn = '工时报表_' + range.label + '.csv'; downloadFile(fn, '\uFEFF' + csv, 'text/csv;charset=utf-8'); showToast("📤 报表已开始下载"); }
-    else { if (navigator.share) navigator.share({ title: '工时报表 ' + range.label, text: res.text }).then(function () { showToast("✅ 分享成功"); }).catch(function (e) { if (e.name !== 'AbortError') fallbackCopyText(res.text); }); else fallbackCopyText(res.text); }
+    var m = document.getElementById('reportRangeModal'); if (!m) return;
+    var mode = m.dataset.mode || '';
+    var sel = document.querySelector('.rpt-option.selected'); if (!sel) { showToast("请先选择报表范围", true); return; }
+    var op = sel.dataset.val;
+    var range; try { range = getReportRange(op); } catch (err) { console.error(err); showToast("获取范围失败：" + (err.message || err), true); return; }
+    if (!range) return;
+    closeReportRangeModal();
+    var res; try { res = buildReport(range); } catch (err) { console.error(err); showToast("生成报表失败：" + (err.message || err), true); return; }
+    if (!res) { showToast("该范围内暂无打卡记录", true); return; }
+    try {
+        if (mode === 'export') {
+            var csv = res.rows.map(function (r2) { return r2.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(','); }).join('\r\n');
+            var fn = '工时报表_' + range.label + '.csv';
+            downloadFile(fn, '\uFEFF' + csv, 'text/csv;charset=utf-8');
+            showToast("📤 报表已开始下载");
+        } else {
+            var shareData = { title: '工时报表 ' + range.label, text: res.text };
+            var canShareFiles = !!(navigator.share && navigator.canShare && navigator.canShare(shareData));
+            if (canShareFiles) { navigator.share(shareData).then(function () { showToast("✅ 分享成功"); }).catch(function (e) { if (e.name !== 'AbortError') fallbackCopyText(res.text); }); }
+            else if (navigator.share) { navigator.share(shareData).then(function () { showToast("✅ 分享成功"); }).catch(function (e) { if (e.name !== 'AbortError') fallbackCopyText(res.text); }); }
+            else { fallbackCopyText(res.text); }
+        }
+    } catch (err) { console.error(err); showToast("操作失败：" + (err.message || err), true); }
 });
 document.getElementById('copyFallbackClose').addEventListener('click', function () { document.getElementById('copyFallbackModal').classList.remove('show'); });
 document.getElementById('copyFallbackClose2').addEventListener('click', function () { document.getElementById('copyFallbackModal').classList.remove('show'); });
