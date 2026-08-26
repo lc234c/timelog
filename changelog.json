@@ -1,5 +1,14 @@
 [
   {
+    "version": "1.7.1",
+    "date": "2026-08-26",
+    "tag": "修复",
+    "items": [
+      { "type": "修复", "text": "修复 PWA/GitHub Pages/移动端下备份导出、报表 CSV、图表 PNG 等下载无响应的问题（改用兼容移动端/Safari/standalone 的下载触发方式）" },
+      { "type": "优化", "text": "Service Worker 改为导航网络优先 + 静态资源缓存优先，动态/带参数请求透传，避免干扰下载与分享" }
+    ]
+  },
+  {
     "version": "1.7.0",
     "date": "2026-08-26",
     "tag": "新增",

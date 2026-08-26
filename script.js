@@ -286,10 +286,14 @@ function openRecordHistory() { closeSettings(); var m = document.getElementById(
 function closeHistory() { document.getElementById('historyModal').classList.remove('show'); }
 
 /* ============ 关于 / 更新记录（数据驱动，便于后续追加） ============ */
-var APP_VERSION = '1.7.0';
+var APP_VERSION = '1.7.1';
 /* 更新日志：优先从 changelog.json 异步加载（不改 JS 即可更新）；
    若 fetch 失败（如 file:// 打开被拦截），回退到下方内存兜底副本。 */
 var CHANGELOG = [
+    { version: '1.7.1', date: '2026-08-26', tag: '修复', items: [
+        '修复 PWA/GitHub Pages/移动端下备份导出、报表 CSV、图表 PNG 下载无响应',
+        'Service Worker 改为导航网络优先，动态请求透传，避免干扰下载与分享'
+    ]},
     { version: '1.7.0', date: '2026-08-26', tag: '新增', items: [
         '图表支持长按保存为 PNG 图片（长按图表即可一键导出）',
         '补卡弹窗默认时间改为当前时间，减少手动修改',
@@ -367,8 +371,24 @@ function renderHistoryList() {
     ld.querySelectorAll('.history-del').forEach(function (b) { b.addEventListener('click', function () { deleteRecordByDate(b.dataset.date, b.dataset.key); }); });
 }
 
-function triggerDownload(fn, ct, mt) { try { var b = (ct instanceof Blob) ? ct : new Blob([ct], { type: mt }), u = URL.createObjectURL(b), a = document.createElement('a'); a.href = u; a.download = fn; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function () { URL.revokeObjectURL(u); }, 30000); return true; } catch (e) { return false; } }
-function downloadFile(fn, ct, mt) { if (!triggerDownload(fn, ct, mt)) { var du = 'data:' + mt + ';charset=utf-8,' + encodeURIComponent(ct), a = document.createElement('a'); a.href = du; a.download = fn; document.body.appendChild(a); a.click(); document.body.removeChild(a); } }
+/* 触发文件下载（兼容移动端 / Safari / standalone PWA）。
+   先尝试动态 <a download>.click()（桌面/多数浏览器有效）；
+   若 click 后未真正开始下载（移动端/Safari/standalone 常见），兜底用 window.open(blobUrl) 触发下载/预览。 */
+function triggerDownload(fn, ct, mt) {
+    try {
+        var b = (ct instanceof Blob) ? ct : new Blob([ct], { type: mt }), u = URL.createObjectURL(b);
+        var a = document.createElement('a'); a.href = u; a.download = fn; a.rel = 'noopener';
+        document.body.appendChild(a);
+        var clicked = false;
+        try { a.click(); clicked = true; } catch (e) { clicked = false; }
+        if (clicked) { setTimeout(function () { try { document.body.removeChild(a); } catch (e) {} }, 0); }
+        else { try { document.body.removeChild(a); } catch (e) {} window.open(u, '_blank', 'noopener'); }
+        setTimeout(function () { try { URL.revokeObjectURL(u); } catch (e) {} }, 60000);
+        return true;
+    } catch (e) { return false; }
+}
+/* 下载文本/CSV/JSON。统一走 blob（GitHub Pages + PWA 下最可靠），不再用 data: URI 兜底 */
+function downloadFile(fn, ct, mt) { triggerDownload(fn, ct, mt); }
 
 /* ============ 备份：下载文件 / 复制数据 两个独立功能 ============ */
 function buildBackupJSON() { return JSON.stringify(allData, null, 0); }
