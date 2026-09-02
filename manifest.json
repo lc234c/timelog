@@ -1,14 +1,17 @@
 {
   "name": "工时记录",
   "short_name": "工时记录",
-  "description": "个人工时打卡与统计工具，支持白/夜排班、补卡、图表趋势与报表导出",
+  "description": "个人工时打卡与统计工具，支持白/夜排班、补卡、图表趋势与数据备份",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f0f2f5",
   "theme_color": "#2196F3",
-  "categories": ["productivity", "utilities"],
+  "categories": [
+    "productivity",
+    "utilities"
+  ],
   "icons": [
     {
       "src": "icon-192.png",

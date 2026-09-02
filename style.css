@@ -108,6 +108,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
 .chart-range-opt:active{opacity:.8;}
 .chart-range-label{flex:1;font-size:10px;color:#c7c7cc;text-align:right;margin-right:2px;}
 .chart-custom{display:flex;align-items:center;gap:6px;margin:0 0 10px;flex-wrap:wrap;}
+/* ===== 图表摘要（周报/月报：累计工时 + 环比 + 进度） ===== */
+.chart-summary{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);font-size:12px;color:var(--text-secondary);line-height:1.6;}
+.chart-summary .cs-item{display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;}
+.chart-summary .cs-label{opacity:.8;}
+.chart-summary .cs-val{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;}
+.chart-summary .cs-total .cs-val{color:var(--primary);font-size:13px;}
+.chart-summary .cs-trend-up{color:var(--success);}
+.chart-summary .cs-trend-down{color:var(--warning);}
+.chart-summary .cs-progress{width:100%;margin-top:2px;}
+.chart-summary .cs-bar{height:5px;border-radius:3px;background:#eef0f3;overflow:hidden;}
+.chart-summary .cs-bar>i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--primary),var(--success));}
+.chart-summary:empty{display:none;}
 .chart-custom input[type="date"]{flex:1;min-width:110px;border:1.5px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fafafa;color:var(--text);outline:none;}
 .chart-custom span{font-size:12px;color:var(--text-secondary);}
 .chart-custom button{padding:6px 14px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;}
@@ -310,6 +322,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
   .shift-block { background:#3a3a3c; }
   .shift-period input[type="time"] { background:#2c2c2e; color:var(--text); border-color:var(--border); }
   #copyFallbackText { background:#3a3a3c; color:var(--text); border-color:var(--border); }
+  .chart-summary { border-top-color:var(--border); }
+  .chart-summary .cs-bar { background:#3a3a3c; }
 
 /* 打卡按钮随进度变色：0/4 蓝 → 1~2 橙 → 3~4 绿 → 满 4 灰(disabled) */
 #punchBtn.punch-blue    { background: var(--primary); }
