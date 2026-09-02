@@ -1,50 +1,161 @@
-# 工时记录 PWA — 代码优化说明
+# 工时记录（WorkTime PWA）
 
-## 本轮优化内容
+一个**纯本地、无后端、无登录**的个人工时打卡与统计 PWA（Progressive Web App）。
+支持白班 / 夜班排班、一键打卡、工时趋势图表、日历视图、数据备份与导入，
+所有数据保存在浏览器 `localStorage` 中，可完全离线使用。
 
-| 编号 | 优化项 | 文件 | 说明 |
-|---|---|---|---|
-| #1 | `getSmartStepIndex` 简化 | ui.js | 移除多余 `done>=4` 守卫，直接返回 `filter(Boolean).length` |
-| #2 | 当日工时缓存 | storage.js | 新增 `getTodayTotal()` + `_todayCache`，`invalidateMonthCache` 联动清空 |
-| #3 | 图表 Canvas 脏检查 | chart.js | `drawChart` 增加指纹 key，状态/数据未变时跳过全量重绘 |
-| #4 | 日历 DOM 节点复用 | ui.js | `_calCells` 缓存池（≤42），切换月/周只更新内容，不重建节点 |
-| #7 | 按职责拆分为模块 | storage/chart/ui | 单文件 script.js → 3 个职责单一模块 + index.html 顺序引入 |
+> 当前版本：**v1.10.9**
 
-## 模块结构
+---
+
+## ✨ 功能特性
+
+### 🕐 打卡
+- **一键智能打卡**：根据当前时间和班次自动判断「上午上班 / 上午下班 / 下午上班 / 下午下班」
+- **白班 / 夜班**：班次标签直接显示在日历卡片上
+- **夜班跨天优化**：凌晨（00:00~05:59）打卡自动归属到夜班起始日，不会错记日期
+- **补卡 / 修改**：点击日历任意日期，在弹出的编辑面板中补录或修改时间
+- **删除单条记录**：今日统计里每条打卡记录后都有 ✕ 按钮，一键移除
+- **默认选中今天**：进入页面不再停在最近打卡日，而是当天
+
+### 📊 统计与图表
+- **工时趋势图**：柱状图（每日工时）+ 折线图切换，渐变填充、圆角柱体、达标线
+- **达标线**：默认 6 小时，可在「设置 → 达标设置」中调整
+- **图表跟随日历**：「本月 / 本周」基于**当前选中日期**计算，点击日历或切换周实时刷新
+- **图表导出**：可将图表导出为 PNG 图片（🖼️ 按钮）
+- **过滤空日期**：趋势图自动跳过无打卡的日期
+
+### 📋 工时记录
+- 按日列出「上午上班 / 上午下班 / 下午上班 / 下午下班」四个时段
+- 时间靠右蓝色高亮，当日总工时一目了然
+- 支持按月份翻页查看
+
+### 📅 日历视图
+- 月历高亮有打卡的日期，鼠标 / 触摸点击查看详情
+- 今日统计默认展开，进入即显示上午 / 下午四个打卡时段
+
+### 💾 数据管理
+- **备份下载**：导出 JSON 备份文件
+- **复制数据**：一键复制全部数据到剪贴板
+- **导入恢复**：从备份文件恢复数据（覆盖前会二次确认）
+- **清空数据**：危险操作，需二次确认
+
+### ⚙️ 设置
+- 显示与打卡偏好
+- **达标设置**（达标工时、达标样式）
+- 数据管理（备份 / 复制 / 导入 / 清空）
+- 关于（版本号、更新记录、仓库链接）
+
+---
+
+## 🚀 使用方式
+
+### 方式一：直接部署（推荐）
+1. 将本仓库所有文件（`index.html`、`style.css`、`script.js`、`sw.js`、
+   `manifest.json`、`version.json`、`changelog.json`、图标文件）放在同一目录
+2. 通过任意静态服务器托管，例如：
+
+   ```bash
+   # 使用 Python
+   python3 -m http.server 8080
+
+   # 或使用 Node.js
+   npx serve .
+   ```
+
+3. 浏览器访问 `http://localhost:8080`
+4. 手机浏览器访问同一地址，使用「添加到主屏幕」即可当作 App 使用
+
+> ⚠️ 必须通过 **HTTP(S)** 访问（`localhost` 也算），不能直接双击 `file://` 打开，
+> 否则 Service Worker 和某些存储 API 无法正常工作。
+
+### 方式二：本地预览
+直接用浏览器打开 `index.html` 也可运行核心功能，但**不建议**用于日常使用
+（PWA 安装、离线缓存、`localStorage` 隔离等行为会受限）。
+
+---
+
+## 📁 文件结构
 
 ```
 工时记录/
-├── index.html      # 入口，按 storage → chart → ui 顺序引入
-├── storage.js      # 工具函数 + 数据层（localStorage / 排班 / 统计缓存）
-├── chart.js        # 图表可视化（Canvas / 导出 PNG / 分享 / 达标线）
-├── ui.js           # UI 渲染 + 交互 + 初始化（依赖前两者）
-├── style.css       # 样式（不变）
-├── sw.js           # Service Worker（不变）
-├── manifest.json   # PWA 清单（不变）
-├── changelog.json  # 更新日志（数据驱动）
-└── version.json    # 当前版本号
+├── index.html        # 页面结构（打卡页 / 统计页 / 设置弹窗）
+├── style.css         # 全部样式（含深色模式、图表、卡片）
+├── script.js         # 核心逻辑（打卡、日历、图表、数据管理）
+├── sw.js             # Service Worker（离线缓存，缓存名随版本号更新）
+├── manifest.json     # PWA 清单
+├── version.json       # 当前版本号（sw.js 读取此文件做缓存版本控制）
+├── changelog.json    # 更新记录（关于页「更新记录」数据源）
+├── icon-192.png      # 应用图标 192x192
+├── icon-512.png      # 应用图标 512x512
+└── README.md
 ```
 
-## 模块契约（全局命名空间 `window.WT`）
+---
 
-| 命名空间 | 提供 | 依赖 |
-|---|---|---|
-| `WT.util` | `getLocalDateStr` / `getCurrentTimeStr` / `getDuration` / `getWeekRange` / `pad` | — |
-| `WT.data` | `allData` / `shiftsConfig` / `getTodayTotal` / `getMonthStats` / `invalidateMonthCache` / `saveData` 等 | `WT.util` |
-| `WT.chart` | `drawChart` / `initChart` / `toggleChartType` / `setChartRange` / `exportChartPNG` / `shareChartImage` / `syncChartWithCalView` | `WT.util` |
-| `WT.ui` | `showToast` / `closeSettings` / `renderCalendar` / `updateStats` / `init` 等 | `WT.util` + `WT.data` + `WT.chart` |
+## 🔧 技术说明
 
-## 加载顺序（重要）
+| 项目 | 说明 |
+|------|------|
+| **运行环境** | 纯前端，零依赖，无需构建 |
+| **数据存储** | `localStorage`（`worktime_records` / `worktime_settings`）|
+| **图表** | Canvas 原生绘制（渐变、圆角、面积折线）|
+| **PWA** | Service Worker 预缓存 + 导航网络优先策略 |
+| **兼容** | 现代浏览器（Chrome / Safari / Edge / Firefox）|
 
-`index.html` 中必须按 **storage.js → chart.js → ui.js** 顺序引入：
-- `storage.js` 先注册 `WT.util` 与 `WT.data`（无外部依赖）
-- `chart.js` 注册 `WT.chart`（依赖 `WT.util`）
-- `ui.js` 最后注册 `WT.ui` 并绑定 `DOMContentLoaded` 初始化（依赖前三者）
+### 关键设计
+- **缓存策略**：`sw.js` 在 `install` 时读取 `version.json`，以 `worktime-<version>` 为缓存名，
+  版本升级后自动清理旧缓存
+- **夜班归属**：`smartPunch()` 仅在「日历选中今天且当前为凌晨」时把日期回退到昨天，
+  避免手动选中夜班起始日时被错误减一天
+- **图表范围**：`getChartSeries()` / `getChartRangeLabel()` 基于 `selectedDate` 计算，
+  实现「本月 / 本周跟随选中日期」
 
-`chart.js` 对 `WT.ui` 仅**软依赖**（`WT.ui && WT.ui.showToast`），避免循环引用；`ui.js` 通过 `WT.chart.*` 调用图表，解耦彻底。
+---
 
-## 部署提示
+## 📝 更新日志
 
-- 所有静态资源（含三个 `.js`）需置于同一目录，由 `sw.js` 预缓存清单统一缓存
-- 升级版本时同步更新 `version.json` 的 `version` 字段与 `sw.js` 的 `CACHE_NAME`
-- 建议通过 `http(s)` 或本地静态服务器（如 `python -m http.server`）打开，避免 `file://` 下 `localStorage` / `fetch` 受限
+完整更新记录见 `changelog.json`，以下为近期版本摘要：
+
+| 版本 | 类型 | 说明 |
+|------|------|------|
+| 1.10.9 | 重构 | 移除「导出报表 / 分享报表」功能及死代码，保留图表 PNG 导出 |
+| 1.10.8 | 功能 | 今日统计每条打卡记录添加删除按钮；统计页区块改名「工时记录」|
+| 1.10.7 | 修复 | 图表「本月 / 本周」跟随选中日期变化 |
+| 1.10.6 | 修复 | 夜班跨天打卡日期归属修正 |
+| 1.10.5 | 优化 | 图表视觉美化（渐变柱体、面积折线、实线目标线、图例）|
+| 1.10.4 | 优化 | 今日统计默认展开 |
+| 1.10.3 | 修复 | 默认选中今天（不再停最近打卡日）|
+| 1.10.2 | 优化 | 过滤空日期 |
+| 1.10.1 | 优化 | 移除重复卡片，记录区块迁入统计 Tab |
+| 1.10.0 | 优化 | 统计页重构（趋势图 + 每日打卡记录）|
+
+---
+
+## ❓ 常见问题
+
+**Q：数据会丢失吗？**
+A：数据存在浏览器本地。建议定期使用「设置 → 数据管理 → 备份下载」导出 JSON。
+更换设备 / 浏览器后通过「导入恢复」还原。
+
+**Q：换了手机怎么迁移数据？**
+A：旧手机上「备份下载」→ 新手机上「导入恢复」即可。
+
+**Q：夜班过了 0 点怎么打卡？**
+A：直接打卡即可。凌晨时段（00:00~05:59）会自动归属到前一天的夜班记录。
+
+**Q：图表显示的月份不对？**
+A：点击日历上任意日期，图表「本月 / 本周」会跟随该日期重新计算。
+
+**Q：如何清空所有数据？**
+A：「设置 → 数据管理 → 清空数据」，需二次确认。
+
+---
+
+## 📄 License
+
+MIT License — 可自由使用、修改、分发。
+
+---
+
+*Made with ❤️ for everyday work.*
