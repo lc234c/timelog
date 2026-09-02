@@ -24,6 +24,11 @@
 
     <div id="todayTag">今天</div>
 
+    <!-- ===== 底部 Tab 容器 ===== -->
+    <div class="tab-container">
+        <!-- Tab 1：打卡 -->
+        <div class="tab-panel active" id="tabPunch">
+
     <div class="calendar-card" id="calendarCard">
         <div class="cal-header">
             <div class="cal-title" id="calTitle">2026年 08月</div>
@@ -68,12 +73,34 @@
         <div class="shift-bar" id="shiftBar"></div>
         <div class="punch-count" id="punchCount">0 / 4</div>
         <div class="stats-detail" id="todayDetail" style="display:none;">
-            <div class="detail-row"><span class="detail-label">上午上班</span><span class="detail-value" id="d_s1">--:--:--</span></div>
-            <div class="detail-row"><span class="detail-label">上午下班</span><span class="detail-value" id="d_e1">--:--:--</span></div>
-            <div class="detail-row"><span class="detail-label">下午上班</span><span class="detail-value" id="d_s2">--:--:--</span></div>
-            <div class="detail-row"><span class="detail-label">下午下班</span><span class="detail-value" id="d_e2">--:--:--</span></div>
+            <div class="detail-row" data-key="s1"><span class="detail-label">上午上班</span><span class="detail-value" id="d_s1">--:--:--</span><button class="detail-del" title="删除该次打卡">✕</button></div>
+            <div class="detail-row" data-key="e1"><span class="detail-label">上午下班</span><span class="detail-value" id="d_e1">--:--:--</span><button class="detail-del" title="删除该次打卡">✕</button></div>
+            <div class="detail-row" data-key="s2"><span class="detail-label">下午上班</span><span class="detail-value" id="d_s2">--:--:--</span><button class="detail-del" title="删除该次打卡">✕</button></div>
+            <div class="detail-row" data-key="e2"><span class="detail-label">下午下班</span><span class="detail-value" id="d_e2">--:--:--</span><button class="detail-del" title="删除该次打卡">✕</button></div>
         </div>
     </div>
+
+        </div><!-- /tabPunch -->
+
+        <!-- Tab 2：统计（本月/本周 + 图表） -->
+        <div class="tab-panel" id="tabStats">
+
+            <!-- 统计概览：本月 / 本周（平均工时 / 打卡天数 / 总工时） -->
+            <div class="history-stats" style="margin:10px 14px 0;">
+                <div class="history-stats-col">
+                    <div class="history-stats-title">📅 本月</div>
+                    <div class="history-stats-row"><span>总工时</span><b id="tabMonthTotal">0.00</b><i>h</i></div>
+                    <div class="history-stats-row"><span>打卡天数</span><b id="tabMonthDays">0</b><i>天</i></div>
+                    <div class="history-stats-row"><span>月平均</span><b id="tabMonthAvg">0.00</b><i>h/天</i></div>
+                </div>
+                <div class="history-stats-col">
+                    <div class="history-stats-title">🗓️ 本周</div>
+                    <div class="history-stats-tip" id="tabWeekTip">点击日历某天可切换周</div>
+                    <div class="history-stats-row"><span>总工时</span><b id="tabWeekTotal">0.00</b><i>h</i></div>
+                    <div class="history-stats-row"><span>打卡天数</span><b id="tabWeekDays">0</b><i>天</i></div>
+                    <div class="history-stats-row"><span>周平均</span><b id="tabWeekAvg">0.00</b><i>h/天</i></div>
+                </div>
+            </div>
 
     <!-- 图表可视化卡片 -->
     <div class="chart-card" id="chartCard">
@@ -108,6 +135,24 @@
         </div>
     </div>
 
+    <!-- 每日打卡记录（由「设置」迁入统计 Tab，作为常驻区块） -->
+    <div class="card-section" id="historySection">
+        <div class="card-section-header">
+            <h3>📋 工时记录</h3>
+            <button class="card-section-refresh" id="historyRefreshBtn" title="刷新">🔄</button>
+        </div>
+
+        <div class="history-filters">
+            <input type="date" id="historyStartDate">
+            <input type="date" id="historyEndDate">
+            <button id="historyQueryBtn">查询</button>
+        </div>
+        <div class="history-list" id="historyList"></div>
+    </div>
+
+        </div><!-- /tabStats -->
+    </div><!-- /tab-container -->
+
     <!-- 补卡弹窗 -->
     <div class="modal-mask" id="makeupModal">
         <div class="modal-content">
@@ -136,17 +181,14 @@
                 </ul>
             </div>
             <div class="settings-group">
-                <div class="settings-group-title">报表与达标</div>
+                <div class="settings-group-title">达标设置</div>
                 <ul class="settings-list">
-                    <li id="exportReportItem">📤 导出报表（CSV）</li>
-                    <li id="shareReportItem">📲 分享报表</li>
                     <li id="targetSettingItem">🎯 设置每日达标线<span class="settings-val" id="settingsTargetVal">6h</span></li>
                 </ul>
             </div>
             <div class="settings-group">
                 <div class="settings-group-title">数据管理</div>
                 <ul class="settings-list">
-                    <li id="openHistoryItem">📋 查看每日打卡记录</li>
                     <li id="downloadBackupItem">💾 下载备份文件</li>
                     <li id="copyDataItem">📋 复制备份数据</li>
                     <li id="importFileItem">📂 从备份文件导入<span class="settings-val" style="background:#eaf3ff;color:var(--primary);">推荐</span></li>
@@ -166,56 +208,6 @@
         </div>
     </div>
 
-    <!-- 历史记录弹窗 -->
-    <div class="modal-mask" id="historyModal">
-        <div class="modal-content">
-            <div class="modal-header"><h3>每日打卡记录</h3><button class="modal-close" id="closeHistoryBtn">×</button></div>
-
-            <!-- 统计区：月 / 周 汇总（原首页「平均工时 / 打卡天数 / 总工时」迁移至此） -->
-            <div class="history-stats">
-                <div class="history-stats-col">
-                    <div class="history-stats-title">📅 本月</div>
-                    <div class="history-stats-row"><span>总工时</span><b id="histMonthTotal">0.00</b><i>h</i></div>
-                    <div class="history-stats-row"><span>打卡天数</span><b id="histMonthDays">0</b><i>天</i></div>
-                    <div class="history-stats-row"><span>月平均</span><b id="histMonthAvg">0.00</b><i>h/天</i></div>
-                </div>
-                <div class="history-stats-col">
-                    <div class="history-stats-title">🗓️ 本周</div>
-                    <div class="history-stats-tip" id="histWeekTip">点击日历某天可切换周</div>
-                    <div class="history-stats-row"><span>总工时</span><b id="histWeekTotal">0.00</b><i>h</i></div>
-                    <div class="history-stats-row"><span>打卡天数</span><b id="histWeekDays">0</b><i>天</i></div>
-                    <div class="history-stats-row"><span>周平均</span><b id="histWeekAvg">0.00</b><i>h/天</i></div>
-                </div>
-            </div>
-
-            <div class="history-filters">
-                <input type="date" id="historyStartDate">
-                <input type="date" id="historyEndDate">
-                <button id="historyQueryBtn">查询</button>
-            </div>
-            <div class="history-list" id="historyList"></div>
-        </div>
-    </div>
-
-    <!-- 报表范围弹窗 -->
-    <div class="modal-mask" id="reportRangeModal">
-        <div class="modal-content">
-            <div class="modal-header"><h3>选择报表范围</h3><button class="modal-close" id="rptRangeCancel">×</button></div>
-            <div class="rpt-options">
-                <div class="rpt-option selected" data-val="month">📅 本月</div>
-                <div class="rpt-option" data-val="week">🗓️ 本周</div>
-                <div class="rpt-option" data-val="custom">✍️ 自定义</div>
-            </div>
-            <div class="rpt-range-custom" id="rptRangeCustom" style="display:none;">
-                <input type="date" id="rptRangeStart">
-                <input type="date" id="rptRangeEnd">
-            </div>
-            <div class="rpt-actions">
-                <button id="rptRangeCancel2" style="background:#f2f2f7;color:#8e8e93;">取消</button>
-                <button id="rptRangeConfirm" style="background:var(--primary);color:#fff;">确认</button>
-            </div>
-        </div>
-    </div>
 
     <!-- 复制兜底文本框弹窗 -->
     <div class="modal-mask" id="copyFallbackModal">
@@ -275,7 +267,7 @@
                 <div class="about-app-icon">📅</div>
                 <div class="about-app-name">工时记录</div>
                 <div class="about-app-version">Version <span id="aboutVersion"></span></div>
-                <div class="about-app-desc">简洁高效的个人工时打卡与统计工具<br>支持白/夜排班 · 补卡 · 图表趋势 · 报表导出</div>
+                <div class="about-app-desc">简洁高效的个人工时打卡与统计工具<br>支持白/夜排班 · 补卡 · 图表趋势 · 数据备份</div>
                 <button class="about-check-btn" id="checkUpdateBtn" type="button">🔄 检查更新</button>
             </div>
             <div class="about-section-title">更新记录</div>
@@ -283,6 +275,12 @@
             <div style="text-align:center;margin-top:14px;"><button class="action-btn" id="closeAboutBtn2" style="background:#f2f2f7;color:#8e8e93;">关闭</button></div>
         </div>
     </div>
+    <!-- 底部 Tab 导航 -->
+    <div class="tabbar" id="tabbar">
+        <div class="tabbar-item active" id="tabBtnPunch" data-tab="tabPunch"><span class="tabbar-icon">📍</span><span class="tabbar-label">打卡</span></div>
+        <div class="tabbar-item" id="tabBtnStats" data-tab="tabStats"><span class="tabbar-icon">📊</span><span class="tabbar-label">统计</span></div>
+    </div>
+
     <!-- Toast 容器：由 ensureToast 兜底创建，此处预置以加快首屏 -->
     <div id="appToast" class="app-toast"></div>
 </div>

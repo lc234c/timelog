@@ -6,7 +6,11 @@
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;-webkit-tap-highlight-color:transparent;}
-.app{max-width:480px;margin:0 auto;min-height:100vh;background:var(--bg);padding-bottom:30px;}
+.app{max-width:480px;margin:0 auto;min-height:100vh;background:var(--bg);
+     /* Tab 栏现为 sticky，随内容自然排列；仅预留底部安全区，去掉原来的固定白边 */
+     padding-bottom:env(safe-area-inset-bottom);
+     /* 用 flex 列布局让 tab-container 撑满视口剩余高度，把 tabbar 压到最底部，消除大白边 */
+     display:flex;flex-direction:column;}
 
 /* 顶部栏 */
 .app-header{background:var(--primary);color:#fff;padding:16px 18px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100;box-shadow:0 2px 10px rgba(74,144,226,.35);}
@@ -66,10 +70,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
 .shift-bar.done{background:linear-gradient(90deg,var(--success),#2ecc71);}
 .punch-count{text-align:center;font-size:12px;color:var(--text-secondary);padding-bottom:10px;}
 .stats-detail{padding:0 16px 14px;border-top:1px solid var(--border);}
-.detail-row{display:flex;justify-content:space-between;padding:8px 0;font-size:13px;border-bottom:1px solid #f0f0f0;}
+.detail-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:13px;border-bottom:1px solid #f0f0f0;}
 .detail-row:last-child{border-bottom:none;}
 .detail-label{color:var(--text-secondary);}
 .detail-value{font-weight:600;font-variant-numeric:tabular-nums;}
+/* 每条打卡记录后的删除按钮：仅该行已有打卡时才显示（.has 由 JS 控制） */
+.detail-del{visibility:hidden;width:26px;height:26px;margin-left:10px;padding:0;border:none;border-radius:50%;background:transparent;color:var(--danger);font-size:13px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;flex:none;}
+.detail-del:active{background:rgba(255,59,48,.12);transform:scale(.86);}
+.detail-row.has .detail-del{visibility:visible;}
 
 /* 月度统计 */
 .month-stats{display:flex;justify-content:space-around;margin:10px 14px 0;padding:14px 0;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);}
@@ -154,17 +162,32 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
 .history-filters input[type="date"]{flex:1;border:1.5px solid var(--border);border-radius:8px;padding:7px 8px;font-size:13px;background:#fafafa;color:var(--text);outline:none;}
 #historyQueryBtn{padding:7px 14px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;white-space:nowrap;}
 .history-list{max-height:45vh;overflow-y:auto;}
-.history-item{background:#f9f9fb;border-radius:10px;padding:10px 12px;margin-bottom:8px;}
-.history-item-header{display:flex;justify-content:space-between;margin-bottom:6px;}
-.history-date{font-weight:600;font-size:13px;}
-.history-total{font-size:12px;color:var(--success);font-weight:600;}
+/* 每日打卡记录：卡片式（日期 + 班次标签 + 垃圾桶 | 四个时间两两并排 | 当日总工时高亮） */
+.history-item{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px 14px;margin-bottom:10px;}
+.history-item-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+.history-head-left{display:flex;align-items:center;gap:8px;}
+.history-date{font-weight:700;font-size:15px;color:var(--text);}
+.history-shift-tag{font-size:11px;font-weight:600;padding:2px 10px;border-radius:10px;background:#eaf3ff;color:var(--primary);}
+.history-shift-tag.night{background:#fff0f0;color:var(--danger);}
+.history-item-body{display:flex;gap:18px;padding:4px 0;margin-bottom:10px;}
+.history-col{flex:1;display:flex;flex-direction:column;gap:4px;}
+.history-pair{display:flex;flex-direction:column;}
+/* 每行：标签左对齐、时间靠右对齐（贴合截图布局） */
 .history-row{display:flex;align-items:center;padding:3px 0;font-size:13px;}
-.history-label{width:80px;color:var(--text-secondary);}
-.history-time{flex:1;font-weight:500;font-variant-numeric:tabular-nums;}
-.history-time.done{color:var(--success);}
-.history-time.pending{color:#c7c7cc;}
-.history-del{color:var(--danger);font-size:12px;padding:2px 8px;cursor:pointer;border-radius:4px;}
-.history-del:active{background:#ffeaea;}
+.history-label{color:var(--text-secondary);font-size:12px;flex:1;}
+.history-time{font-weight:600;font-variant-numeric:tabular-nums;font-size:13px;color:var(--primary);text-align:right;white-space:nowrap;}
+.history-time.done{color:var(--primary);}
+.history-time.pending{color:#c7c7cc;font-weight:400;}
+.history-item-footer{display:flex;justify-content:space-between;align-items:baseline;padding-top:8px;border-top:1px solid var(--border);}
+.history-footer-label{font-size:12px;color:var(--text-secondary);}
+.history-footer-hours{font-size:12px;color:var(--text-secondary);}
+.history-footer-hours b{font-size:18px;font-weight:700;color:var(--primary);font-variant-numeric:tabular-nums;margin-right:2px;}
+@media (max-width:360px){
+    .history-item-body{gap:10px;}
+    .history-label{font-size:11px;}
+    .history-time{font-size:12px;}
+    .history-footer-hours b{font-size:16px;}
+}
 
 /* 补卡表单 */
 .makeup-form{display:flex;flex-direction:column;gap:14px;}
@@ -174,17 +197,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
 .makeup-actions button{flex:1;padding:12px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;}
 #cancelMakeup,#cancelMakeup2{background:#f2f2f7;color:var(--text-secondary);}
 #confirmMakeup{background:var(--primary);color:#fff;}
-
-/* 报表范围 */
-.rpt-options{display:flex;gap:10px;margin-bottom:14px;}
-.rpt-option{flex:1;text-align:center;padding:10px 0;border:1.5px solid var(--border);border-radius:10px;font-size:14px;cursor:pointer;}
-.rpt-option.selected{background:var(--primary);color:#fff;border-color:var(--primary);}
-.rpt-range-custom{display:flex;gap:8px;margin-bottom:14px;}
-.rpt-range-custom input[type="date"]{flex:1;border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:14px;background:#fafafa;}
-.rpt-actions{display:flex;gap:10px;}
-.rpt-actions button{flex:1;padding:12px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;}
-#rptRangeCancel,#rptRangeCancel2{background:#f2f2f7;color:var(--text-secondary);}
-#rptRangeConfirm{background:var(--primary);color:#fff;}
 
 /* Toast */
 .app-toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);background:rgba(0,0,0,.78);color:#fff;padding:10px 22px;border-radius:24px;font-size:14px;opacity:0;pointer-events:none;transition:all .3s ease;z-index:999;white-space:nowrap;max-width:85vw;text-align:center;}
@@ -291,8 +303,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
   #historyQueryBtn { background:var(--primary); }
   .makeup-form input,.makeup-form select { background:#3a3a3c; color:var(--text); border-color:var(--border); }
   #cancelMakeup,#cancelMakeup2 { background:#3a3a3c; color:var(--text-secondary); }
-  .rpt-range-custom input[type="date"] { background:#3a3a3c; color:var(--text); border-color:var(--border); }
-  #rptRangeCancel,#rptRangeCancel2 { background:#3a3a3c; color:var(--text-secondary); }
   .app-toast { background:rgba(120,120,128,.85); }
   .about-app { border-bottom-color:var(--border); }
   .changelog-item { background:#3a3a3c; }
@@ -308,3 +318,38 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
 #punchBtn.punch-disabled { background: #c7c7cc; color: #fff; }
 #punchBtn.punch-disabled:active { transform: none; }
 }
+
+/* ===== 底部 Tab 页 ===== */
+.tab-container { position: relative; flex: 1; }
+.tab-panel { display: none; animation: tabFade .25s ease; }
+.tab-panel.active { display: block; }
+@keyframes tabFade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.tabbar { position: sticky; bottom: 0; display: flex; background: var(--card);
+    border-top: 1px solid var(--border); box-shadow: 0 -2px 10px rgba(0,0,0,.04);
+    padding-bottom: env(safe-area-inset-bottom); z-index: 90; }
+.tabbar-item { flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 2px; padding: 8px 0 6px; cursor: pointer;
+    color: var(--text-secondary); font-size: 11px; user-select: none; transition: color .2s; }
+.tabbar-item .tabbar-icon { font-size: 22px; line-height: 1; transition: transform .2s; }
+.tabbar-item.active { color: var(--primary); font-weight: 600; }
+.tabbar-item.active .tabbar-icon { transform: scale(1.12); }
+
+/* 统计概览卡片（首页 Tab2 与记录页共用） */
+.history-stats { display: flex; gap: 10px; }
+.history-stats-col { flex: 1; background: var(--card); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 12px 14px; }
+.history-stats-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.history-stats-row { display: flex; align-items: baseline; gap: 4px;
+    font-size: 12px; color: var(--text-secondary); padding: 3px 0; }
+.history-stats-row b { margin-left: auto; font-size: 16px; font-weight: 700;
+    color: var(--primary); font-variant-numeric: tabular-nums; }
+.history-stats-row i { font-style: normal; font-size: 11px; color: var(--text-secondary); }
+.history-stats-tip { font-size: 10px; color: #c7c7cc; margin-bottom: 6px; line-height: 1.4; }
+
+/* ===== 每日打卡记录（由「设置」迁入统计 Tab） ===== */
+.card-section{background:var(--card);margin:12px 14px 0;border-radius:var(--radius);box-shadow:var(--shadow);padding:14px 16px 12px;}
+.card-section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+.card-section-header h3{font-size:15px;font-weight:600;}
+.card-section-refresh{background:#eaf3ff;border:none;width:32px;height:32px;border-radius:50%;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .2s;}
+.card-section-refresh:active{transform:rotate(180deg) scale(.94);}

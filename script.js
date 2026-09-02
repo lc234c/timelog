@@ -12,25 +12,20 @@ function getCurrentTimeStr(t) {
 function parseTimeParts(s) { if (!s) return [0, 0, 0]; var p = s.split(':').map(Number); return [p[0] || 0, p[1] || 0, p[2] || 0]; }
 function getWeekRange(dateObj) {
     var d = new Date(dateObj); d.setHours(0, 0, 0, 0); var w = d.getDay(); if (w === 0) w = 7;
-    var mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - w + 1);
-    var sun = new Date(d.getFullYear(), d.getMonth(), d.getDate() - w + 7);
+    var mon = new Date(d); mon.setDate(d.getDate() - w + 1);
+    var sun = new Date(mon); sun.setDate(mon.getDate() + 6); sun.setHours(23, 59, 59, 999);
     return { mon: mon, sun: sun };
 }
 function pad(n) { return String(n).padStart(2, '0'); }
-/* 本地日期 +1 天的字符串表示：统一口径，规避时区/DST 导致的日期漂移 */
-function nextDayStr(str) {
-    var p = str.split('-').map(Number); var dt = new Date(p[0], p[1] - 1, p[2] + 1);
-    return getLocalDateStr(dt);
-}
-/* 安全访问当前选中日期的 status：始终取最新对象，避免切换/导入后持有旧引用 */
-function getCurrentStatus() { return getCurrentData().status; }
 
 /* ============ 数据层 ============ */
 var allData = loadData(), storageAvailable = true;
 function loadData() { try { var s = localStorage.getItem('attendanceData'); return s ? JSON.parse(s) : {}; } catch (e) { storageAvailable = false; return {}; } }
 function saveData() { if (!storageAvailable) return; try { localStorage.setItem('attendanceData', JSON.stringify(allData)); } catch (e) { storageAvailable = false; } }
 
-/* 排班配置：时段收敛到 periods，消灭魔法数字。 */
+/* 排班配置：时段收敛到 periods，消灭魔法数字。
+   班别时间段支持用户自定义：自定义值存 localStorage('shiftSchedules')，
+   未设置/非法时回退到下方 DEFAULT_SCHEDULES 内置默认。 */
 var DEFAULT_SCHEDULES = {
     day: {
         name: "白班",
@@ -43,9 +38,11 @@ var DEFAULT_SCHEDULES = {
         steps: ["夜班上班", "午夜下班", "凌晨上班", "凌晨下班"], keys: ["s1", "e1", "s2", "e2"], labels: ["前半段工时", "后半段工时"]
     }
 };
+/* 由 periods 派生 text 描述 */
 function buildShiftText(periods) {
     return periods.map(function (p) { return p.start + "~" + p.end; }).join(" (午休) ");
 }
+/* 加载用户自定义班别配置（localStorage），与默认合并；非法字段回退默认 */
 function loadShiftSchedules() {
     var custom = null;
     if (storageAvailable) { try { var raw = localStorage.getItem('shiftSchedules'); if (raw) custom = JSON.parse(raw); } catch (e) { custom = null; } }
@@ -69,30 +66,28 @@ function saveShiftSchedules() {
 }
 var currentShiftType = localStorage.getItem('defaultShiftType') || 'day';
 function saveDefaultShiftType() { if (storageAvailable) localStorage.setItem('defaultShiftType', currentShiftType); }
+/* 月历默认展开偏好：true=默认月视图，false=默认周视图（折叠）。默认 false 以保持紧凑首屏 */
 function loadCalDefaultExpanded() { if (storageAvailable) { var v = localStorage.getItem('calendarDefaultExpanded'); if (v === '1') return true; if (v === '0') return false; } return false; }
 function saveCalDefaultExpanded(v) { if (storageAvailable) localStorage.setItem('calendarDefaultExpanded', v ? '1' : '0'); }
 var calDefaultExpanded = loadCalDefaultExpanded();
 
-/* 选中「最近一个有打卡数据的日期」：让记录页的本月/本周统计首次打开即有有意义数据。
-   完全遵循「跟随日历选中日」——此后用户在日历上点任一天，周/月统计立即跟随切换；
-   仅影响初始默认值，不改变任何交互行为。无任何打卡数据时回退为今天。 */
-function findLatestRecordDate() {
-    var keys = Object.keys(allData).filter(function (k) { var d = allData[k]; return d && d.status && (d.status.s1 || d.status.e1 || d.status.s2 || d.status.e2); });
-    if (!keys.length) return null;
-    keys.sort(); /* 字符串 YYYY-MM-DD 字典序即日期序 */
-    var p = keys[keys.length - 1].split('-').map(Number);
-    return new Date(p[0], p[1] - 1, p[2]);
-}
-var selectedDate = findLatestRecordDate() || new Date();
+/* 默认选中：始终为今天（new Date() 在当天 0 点附近，仅取年月日）。
+   说明：此前逻辑是"优先跳到最近打卡日"，导致打开时停留在过去的日期（如 9/6）。
+   现改为每次打开默认选中今天；"回到今天"按钮(#todayTag)仍可用于手动跳转。 */
+function getToday() { var t = new Date(); return new Date(t.getFullYear(), t.getMonth(), t.getDate()); }
+var selectedDate = getToday();
 var currentMonth = { year: selectedDate.getFullYear(), month: selectedDate.getMonth() };
 function getCurrentData() {
     var ds = getLocalDateStr(selectedDate);
     if (!allData[ds]) allData[ds] = { shiftType: currentShiftType, status: { s1: null, e1: null, s2: null, e2: null } };
     return allData[ds];
 }
-/* 兼容旧代码对全局 `status` 的读取：定义为 getter 始终指向当前日期，杜绝陈旧引用 */
-var status = getCurrentStatus();
-try { Object.defineProperty(window, 'status', { get: getCurrentStatus, set: function (v) { getCurrentData().status = v; }, configurable: true }); } catch (e) { /* 严格/嵌入环境不支持时回退为普通变量，需手动同步 */ }
+/* status 统一走 getter，始终指向当前选中日期，杜绝切换/导入后持有旧引用 */
+Object.defineProperty(window, 'status', {
+    get: function () { return getCurrentData().status; },
+    set: function (v) { /* 兼容赋值，忽略 */ }
+});
+var status = getCurrentData().status;
 
 /* 月统计缓存 */
 var _monthCache = { key: '', total: 0, days: 0 };
@@ -115,86 +110,26 @@ function cacheEls() {
         expandIcon: document.getElementById('expandIcon'),
         todayDetail: document.getElementById('todayDetail'),
         d_s1: document.getElementById('d_s1'), d_e1: document.getElementById('d_e1'),
-        d_s2: document.getElementById('d_s2'), d_e2: document.getElementById('d_e2')
-        /* 首页「平均工时/打卡天数/总工时」已迁移至记录页（history-stats），首页不再缓存对应 id */
+        d_s2: document.getElementById('d_s2'), d_e2: document.getElementById('d_e2'),
+        monthAvg: document.getElementById('tabMonthAvg'),
+        monthDays: document.getElementById('tabMonthDays'),
+        monthTotalHours: document.getElementById('tabMonthTotal')
     };
 }
 var els = cacheEls();
-/* 安全取值：首页若不存在则跳过赋值（统计已迁至记录页，首页 DOM 已移除） */
-function setText(el, val) { if (el) el.innerText = val; }
 
 /* ============ Toast ============ */
 function showToast(msg, isError) {
-    var t = ensureToast();
+    var t = document.getElementById('appToast');
+    if (!t) { t = document.createElement('div'); t.id = 'appToast'; t.className = 'app-toast'; document.querySelector('.app').appendChild(t); }
     t.innerText = msg; t.className = 'app-toast show' + (isError ? ' err' : '');
     clearTimeout(t._timer); t._timer = setTimeout(function () { t.className = 'app-toast'; }, 2400);
-}
-/* 确保 toast 容器存在：优先取现有元素，否则在 .app 内兜底创建 */
-function ensureToast() {
-    var t = document.getElementById('appToast');
-    if (!t) {
-        t = document.createElement('div'); t.id = 'appToast'; t.className = 'app-toast';
-        var host = document.querySelector('.app') || document.body;
-        host.appendChild(t);
-    }
-    return t;
 }
 
 /* ============ 时钟 ============ */
 function updateClock() { els.clock.innerText = new Date().toLocaleTimeString('en-GB', { hour12: false }); }
 var clockTimer = setInterval(updateClock, 1000); updateClock();
 document.addEventListener('visibilitychange', function () { if (document.hidden) { clearInterval(clockTimer); } else { updateClock(); clockTimer = setInterval(updateClock, 1000); } });
-
-/* ============ 月/周统计计算 ============ */
-function getMonthRange() { var y = selectedDate.getFullYear(), m = selectedDate.getMonth(); return { start: getLocalDateStr(new Date(y, m, 1)), end: getLocalDateStr(new Date(y, m + 1, 0)) }; }
-/* 统计某日期区间：返回 {total, days}。days = 有有效工时(>0)的天数；口径统一，供月/周/报表复用。
-   注意：区间用「本地日期字符串」比较（getLocalDateStr 为 YYYY-MM-DD），
-   故遍历基于字符串 +1 天构造，避免时区偏移导致跨日错一位。 */
-function getRangeStats(startStr, endStr) {
-    var total = 0, days = 0;
-    var cur = startStr;
-    while (cur <= endStr) {
-        var dy = allData[cur];
-        if (dy) {
-            var st = dy.status, tot = getDuration(st.s1, st.e1) + getDuration(st.s2, st.e2);
-            if (tot > 0) { total += tot; days++; }
-        }
-        /* 用本地日期 +1 天后再格式化为字符串，规避 DST / 时区导致的日期漂移 */
-        cur = nextDayStr(cur);
-    }
-    return { total: total, days: days };
-}
-/* 月统计（带缓存） */
-function getMonthStats() {
-    var y = selectedDate.getFullYear(), m = selectedDate.getMonth(), key = y + '-' + m;
-    if (_monthCache.key === key) return { total: _monthCache.total, days: _monthCache.days };
-    var r = getMonthRange(), ms = getRangeStats(r.start, r.end);
-    _monthCache = { key: key, total: ms.total, days: ms.days };
-    return ms;
-}
-/* 本周统计（不缓存，周随日期变化更频繁） */
-function getWeekStats() {
-    var w = getWeekRange(selectedDate);
-    return getRangeStats(getLocalDateStr(w.mon), getLocalDateStr(w.sun));
-}
-/* 填充记录页的统计卡片：月总工时 / 月打卡天数 / 月平均 + 周同三项 */
-function renderHistoryStats() {
-    var ms = getMonthStats();
-    setText(document.getElementById('histMonthTotal'), ms.total.toFixed(2));
-    setText(document.getElementById('histMonthDays'), ms.days);
-    setText(document.getElementById('histMonthAvg'), ms.days > 0 ? (ms.total / ms.days).toFixed(2) : '0.00');
-    var ws = getWeekStats();
-    setText(document.getElementById('histWeekTotal'), ws.total.toFixed(2));
-    setText(document.getElementById('histWeekDays'), ws.days);
-    setText(document.getElementById('histWeekAvg'), ws.days > 0 ? (ws.total / ws.days).toFixed(2) : '0.00');
-    /* 同步本周范围提示（周一~周日），让用户清楚「周平均」的口径，避免本周无打卡时困惑 */
-    var tip = document.getElementById('histWeekTip');
-    if (tip) {
-        var w = getWeekRange(selectedDate);
-        var fmt = function (d) { return (d.getMonth() + 1) + '/' + d.getDate(); };
-        tip.innerText = '本周 ' + fmt(w.mon) + ' ~ ' + fmt(w.sun) + '（点击日历切换）';
-    }
-}
 
 /* ============ 月视图 ============ */
 function renderCalendar() {
@@ -218,9 +153,10 @@ function renderCalendar() {
         div.innerText = dn;
         div.addEventListener('click', function (ev) {
             var d = ev.currentTarget._dt; selectedDate = d;
-            var cd = getCurrentData(); currentShiftType = cd.shiftType || currentShiftType;
+            var cd = getCurrentData(); status = cd.status; currentShiftType = cd.shiftType || currentShiftType;
             els.shiftSelect.value = currentShiftType; renderCalendar(); updateButtonText(); updateStats(); updateSelectedLabel(); renderHistoryStats();
         });
+        /* 长按触发补卡，避免点击查看时被弹窗打扰 */
         (function (dCell) {
             var timer = null;
             var start = function () { timer = setTimeout(function () { openMakeupModal(selectedDate); }, 600); };
@@ -232,7 +168,7 @@ function renderCalendar() {
         div._dt = dt; frag.appendChild(div);
     }
     grid.appendChild(frag);
-    drawChart();
+    drawChart(); /* 月视图切换时，图表同步刷新为对应月份 */
 }
 
 /* ============ 周视图（折叠态） ============ */
@@ -250,15 +186,15 @@ function renderWeekView() {
         div.innerText = dt.getDate();
         div.addEventListener('click', function (ev) {
             var d2 = ev.currentTarget._dt; selectedDate = d2;
-            var cd = getCurrentData(); currentShiftType = cd.shiftType || currentShiftType;
-            els.shiftSelect.value = currentShiftType; renderWeekView(); updateButtonText(); updateStats(); updateSelectedLabel(); renderHistoryStats();
+            var cd = getCurrentData(); status = cd.status; currentShiftType = cd.shiftType || currentShiftType;
+            els.shiftSelect.value = currentShiftType; renderWeekView(); updateButtonText(); updateStats(); updateSelectedLabel(); renderHistoryStats(); drawChart();
         });
         div._dt = dt; grid.appendChild(div);
     }
 }
 
 function changeMonth(o) { currentMonth.month += o; if (currentMonth.month < 0) { currentMonth.month = 11; currentMonth.year--; } if (currentMonth.month > 11) { currentMonth.month = 0; currentMonth.year++; } renderCalendar(); renderHistoryStats(); }
-function changeWeek(o) { var t = new Date(getWeekRange(selectedDate).mon); t.setDate(t.getDate() + o * 7); selectedDate = t; currentMonth = { year: t.getFullYear(), month: t.getMonth() }; renderWeekView(); updateSelectedLabel(); updateButtonText(); updateStats(); renderHistoryStats(); }
+function changeWeek(o) { var t = new Date(getWeekRange(selectedDate).mon); t.setDate(t.getDate() + o * 7); selectedDate = t; currentMonth = { year: t.getFullYear(), month: t.getMonth() }; renderWeekView(); updateSelectedLabel(); updateButtonText(); updateStats(); renderHistoryStats(); drawChart(); }
 
 function collapseCalendar() {
     var ic = document.getElementById('collapseCal');
@@ -271,29 +207,17 @@ function changeShift() {
     currentShiftType = els.shiftSelect.value; saveDefaultShiftType();
     var cd = getCurrentData(); cd.shiftType = currentShiftType;
     els.shiftText.innerText = '排班时段: ' + shiftsConfig[currentShiftType].text;
-    updateButtonText(); updateStats();
+    status = cd.status; updateButtonText(); updateStats();
 }
 
 /* ============ 打卡步骤（含智能提示） ============ */
 function getSmartStepIndex() {
-    var st = getCurrentStatus();
-    var done = [st.s1, st.e1, st.s2, st.e2].filter(Boolean).length;
-    return done >= 4 ? 4 : done;
+    /* 已完成的步骤数 */
+    var done = [status.s1, status.e1, status.s2, status.e2].filter(Boolean).length;
+    if (done >= 4) return 4;
+    return done; /* 按顺序推荐下一个未打卡节点 */
 }
-function updateButtonText() {
-    var cs = getSmartStepIndex();
-    els.btnText.innerText = cs < 4 ? shiftsConfig[currentShiftType].steps[cs] : "已完成";
-    applyPunchButtonColor(cs);
-}
-/* 打卡按钮随进度变色：0/4 蓝 → 1~2 橙 → 3~4 绿 → 满 4 灰(disabled) */
-function applyPunchButtonColor(done) {
-    var btn = els.punchBtn; if (!btn) return;
-    btn.classList.remove('punch-blue', 'punch-orange', 'punch-green', 'punch-disabled');
-    if (done >= 4) btn.classList.add('punch-disabled');
-    else if (done >= 3) btn.classList.add('punch-green');
-    else if (done >= 1) btn.classList.add('punch-orange');
-    else btn.classList.add('punch-blue');
-}
+function updateButtonText() { var cs = getSmartStepIndex(); els.btnText.innerText = cs < 4 ? shiftsConfig[currentShiftType].steps[cs] : "已完成"; var colors = ["#4a90e2", "#ff9500", "#34c759", "#34c759"]; if (els.punchBtn) { els.punchBtn.style.background = cs < 4 ? colors[cs] : "#c7c7cc"; els.punchBtn.disabled = cs >= 4; } }
 
 /* ============ 打卡（防连点） ============ */
 function isInPeriods(periods, hm) {
@@ -303,19 +227,32 @@ function isInPeriods(periods, hm) {
 function smartPunch() {
     var btn = els.punchBtn; if (btn.disabled) return; btn.disabled = true; btn.style.opacity = '0.5';
     var now = new Date(), ts = getCurrentTimeStr(now), tshm = ts.slice(0, 5), cfg = shiftsConfig[currentShiftType], ok = false;
-    if (isInPeriods(cfg.periods, tshm)) ok = true;
+    if (currentShiftType === 'day') { if (isInPeriods(cfg.periods, tshm)) ok = true; }
+    else { if (isInPeriods(cfg.periods, tshm)) ok = true; }
     if (!ok) { if (!confirm('当前时间(' + tshm + ')不在【' + cfg.name + '】排班时段内，是否强制打卡/补卡？')) { btn.disabled = false; btn.style.opacity = '1'; return; } }
     var today = new Date(), isToday = selectedDate.toDateString() === today.toDateString();
     var td = new Date(selectedDate);
-    if (currentShiftType === 'night' && now.getHours() < 6) td.setDate(td.getDate() - 1);
+    /* 夜班跨天归属规则（解决"9.1夜班、过0点后打卡"日期错乱）：
+       - 当前在凌晨(00:00~05:59)且打夜班时，打卡应归属到"夜班的起始日"(前一天)
+       - 仅当日历当前选中的是【今天】时才自动回退一天（凌晨本就属于昨天的夜班）
+       - 若用户已手动选中了昨天/其他日期，则【保持不动】，避免重复减一天导致错归到更早日期 */
+    if (currentShiftType === 'night' && now.getHours() < 6) {
+        var todaysMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        var selMidnight = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+        if (selMidnight.getTime() === todaysMidnight.getTime()) {
+            td.setDate(td.getDate() - 1);   // 选中今天 → 回退到昨天（夜班起始日）
+        }
+        // 否则：selectedDate 已是昨天或其他日期，保持不变，直接在其上打卡
+    }
     var tds = getLocalDateStr(td);
     if (!allData[tds]) allData[tds] = { shiftType: currentShiftType, status: { s1: null, e1: null, s2: null, e2: null } };
     else if (!allData[tds].shiftType) allData[tds].shiftType = currentShiftType;
     if (td.toDateString() !== selectedDate.toDateString()) { selectedDate = td; currentShiftType = allData[tds].shiftType || currentShiftType; els.shiftSelect.value = currentShiftType; renderCalendar(); updateSelectedLabel(); }
-    var st = getCurrentStatus(), cs = getSmartStepIndex();
-    if (cs === 0) st.s1 = ts; else if (cs === 1) st.e1 = ts; else if (cs === 2) st.s2 = ts; else if (cs === 3) st.e2 = ts;
+    status = getCurrentData().status;
+    var cs = getSmartStepIndex();
+    if (cs === 0) status.s1 = ts; else if (cs === 1) status.e1 = ts; else if (cs === 2) status.s2 = ts; else if (cs === 3) status.e2 = ts;
     else { btn.disabled = false; btn.style.opacity = '1'; showToast("该日期4次打卡已满，无法增加！", true); return; }
-    invalidateMonthCache(); saveData(); renderCalendar(); updateStats(); updateButtonText(); drawChart(); renderHistoryStats();
+    invalidateMonthCache(); saveData(); renderCalendar(); updateStats(); updateButtonText(); drawChart();
     if (navigator.vibrate) try { navigator.vibrate(50); } catch (e) {}
     showToast("✅ 打卡成功"); btn.disabled = false; btn.style.opacity = '1';
 }
@@ -323,85 +260,156 @@ function deleteRecordByDate(ds, key) {
     if (!confirm('确定删除 ' + ds + ' 的这条记录吗？')) return;
     if (!allData[ds]) return;
     allData[ds].status[key] = null; invalidateMonthCache(); saveData();
-    renderHistoryList(); renderCalendar(); updateStats(); updateSelectedLabel(); drawChart(); renderHistoryStats(); showToast("删除成功");
+    /* 仅当删除的是当前选中日期时，才覆盖 status 引用 */
+    if (ds === getLocalDateStr(selectedDate)) status = allData[ds].status;
+    renderHistoryList(); renderCalendar(); updateStats(); updateSelectedLabel(); drawChart(); showToast("删除成功");
+}
+
+/* 更新「今日统计」单行：写入时间文本，并按是否有打卡值切换 .has 类（控制删除按钮显隐） */
+function setDetailRow(key, val) {
+    var el = document.getElementById('d_' + key), row = el && el.closest('.detail-row');
+    if (!el) return;
+    el.innerText = val || '--:--:--';
+    if (row) row.classList.toggle('has', !!val);
+}
+
+/* 删除「今日统计」中的某一条打卡记录（上午上班/上午下班/下午上班/下午下班） */
+function deleteTodayTime(key) {
+    var ds = getLocalDateStr(selectedDate);
+    if (!allData[ds] || !allData[ds].status[key]) return;
+    if (!confirm('确定删除「' + selectedDate.getFullYear() + '年' + (selectedDate.getMonth() + 1) + '月' + selectedDate.getDate() + '日」的这次打卡记录吗？')) return;
+    allData[ds].status[key] = null;
+    invalidateMonthCache(); saveData();
+    status = allData[ds].status;
+    renderCalendar(); updateStats(); updateButtonText(); drawChart(); showToast("删除成功");
 }
 
 function getDuration(a, b) {
     if (!a || !b) return 0;
     var ah = parseTimeParts(a), bh = parseTimeParts(b);
     var s = (bh[0] * 3600 + bh[1] * 60 + bh[2]) - (ah[0] * 3600 + ah[1] * 60 + ah[2]);
-    if (s < 0) s += 86400; /* 统一处理跨天（含夜班跨零点） */
+    if (s < 0) s += 86400; /* 统一处理跨天 */
     return s / 3600;
 }
+function getMonthRange() { var y = selectedDate.getFullYear(), m = selectedDate.getMonth(); return { start: getLocalDateStr(new Date(y, m, 1)), end: getLocalDateStr(new Date(y, m + 1, 0)) }; }
+
 function toggleTodayDetails(e) { if (e.target.closest('#todayDetail')) return; var d = els.todayDetail, ic = els.expandIcon; if (d.style.display === 'none') { d.style.display = 'block'; ic.innerText = '△'; } else { d.style.display = 'none'; ic.innerText = '▽'; } }
 
-/* ============ 统计刷新 ============ */
+/* ============ 统计（月统计带缓存） ============ */
+function getMonthStats() {
+    var y = selectedDate.getFullYear(), m = selectedDate.getMonth(), key = y + '-' + m;
+    if (_monthCache.key === key) return { total: _monthCache.total, days: _monthCache.days };
+    var r = getMonthRange(), mt = 0, md = 0;
+    for (var d = new Date(r.start); d <= new Date(r.end); d.setDate(d.getDate() + 1)) {
+        var ds = getLocalDateStr(d); if (allData[ds]) { var d2 = allData[ds].status, dt = allData[ds].shiftType || 'day', dtot = getDuration(d2.s1, d2.e1) + getDuration(d2.s2, d2.e2); if (dtot > 0) { mt += dtot; md++; } }
+    }
+    _monthCache = { key: key, total: mt, days: md };
+    return { total: mt, days: md };
+}
 function updateStats() {
-    var st = getCurrentStatus();
-    var s1 = getDuration(st.s1, st.e1), s2 = getDuration(st.s2, st.e2), tot = s1 + s2;
-    setText(els.totalHours, tot.toFixed(2));
-    setText(els.punchCount, getSmartStepIndex() + ' / 4');
-    if (els.shiftBar) els.shiftBar.className = getSmartStepIndex() === 4 ? 'shift-bar done' : 'shift-bar';
-    setText(els.d_s1, st.s1 || '--:--:--'); setText(els.d_e1, st.e1 || '--:--:--');
-    setText(els.d_s2, st.s2 || '--:--:--'); setText(els.d_e2, st.e2 || '--:--:--');
-    /* 月/周统计统一由 renderHistoryStats 刷新（记录页卡片） */
-    renderHistoryStats();
+    var cst = getCurrentData().shiftType || 'day';
+    var s1 = getDuration(status.s1, status.e1), s2 = getDuration(status.s2, status.e2), tot = s1 + s2;
+    els.totalHours.innerText = tot.toFixed(2); els.punchCount.innerText = getSmartStepIndex() + ' / 4';
+    els.shiftBar.className = getSmartStepIndex() === 4 ? 'shift-bar done' : 'shift-bar';
+    setDetailRow('s1', status.s1); setDetailRow('e1', status.e1);
+    setDetailRow('s2', status.s2); setDetailRow('e2', status.e2);
+    var ms = getMonthStats();
+    /* 月统计已迁移至记录页 / 统计 Tab，此处触发同步刷新 */
+    if (typeof renderHistoryStats === 'function') renderHistoryStats();
 }
 
 /* ============ 设置 / 历史 ============ */
+function switchToStatsTab() { var item = document.querySelector('.tabbar-item[data-tab="tabStats"]'); if (item) item.click(); }
 function openSettings() { document.getElementById('settingsModal').classList.add('show'); }
 function closeSettings() { document.getElementById('settingsModal').classList.remove('show'); }
-function openRecordHistory() {
-    closeSettings();
-    var m = document.getElementById('historyModal'); m.classList.add('show');
-    var t = new Date();
-    document.getElementById('historyStartDate').value = getLocalDateStr(new Date(t.getFullYear(), t.getMonth(), 1));
-    document.getElementById('historyEndDate').value = getLocalDateStr(t);
-    renderHistoryStats(); /* 打开即刷新月/周统计 */
-    renderHistoryList();
-}
-function closeHistory() { document.getElementById('historyModal').classList.remove('show'); }
+function openRecordHistory() { /* 已迁入统计 Tab，直接切到该 Tab 并刷新列表 */ switchToStatsTab(); var t = new Date(); var sd = document.getElementById('historyStartDate'), ed = document.getElementById('historyEndDate'); if (sd && !sd.value) sd.value = getLocalDateStr(new Date(t.getFullYear(), t.getMonth(), 1)); if (ed && !ed.value) ed.value = getLocalDateStr(t); renderHistoryList(); }
+function closeHistory() { /* 区块已迁入统计 Tab，无弹窗可关；留作兼容空函数 */ }
 
-/* ============ 关于 / 更新记录（数据驱动） ============ */
-var APP_VERSION = '1.8.1';
+/* ============ 关于 / 更新记录（数据驱动，便于后续追加） ============ */
+var APP_VERSION = '1.10.9';
+/* 更新日志：优先从 changelog.json 异步加载（不改 JS 即可更新）；
+   若 fetch 失败（如 file:// 打开被拦截），回退到下方内存兜底副本。 */
 var CHANGELOG = [
-    { version: '1.7.2', date: '2026-08-26', tag: '新增', items: [
-        '首页「平均工时/打卡天数/总工时」迁移至记录页，并新增周统计（周平均/周总工时/周打卡天数）',
-        '打卡按钮随进度变色：蓝→橙→绿→灰(disabled)'
+    { version: '1.10.9', date: '2026-09-02', tag: '优化', items: [
+        "设置弹窗移除「导出报表」「分享报表」功能，同步移除报表范围弹窗、相关CSS样式及JS死代码，代码更精简"
     ]},
-    { version: '1.7.1', date: '2026-08-26', tag: '修复', items: [
-        '修复 PWA/GitHub Pages/移动端下备份导出、报表 CSV、图表 PNG 下载无响应',
-        'Service Worker 改为导航网络优先，动态请求透传，避免干扰下载与分享'
+    { version: '1.10.8', date: '2026-09-02', tag: '优化', items: [
+        "打卡页「今日统计」每条打卡记录后增加删除按钮，可逐条删除上午/下午某次打卡（仅该时段有打卡时才显示）",
+        "统计页「每日打卡记录」改名为「工时记录」，并移除整卡删除按钮，删除统一在打卡页今日统计中按条操作",
+        "设置弹窗移除「导出报表」「分享报表」功能及其相关代码（报表范围弹窗、CSS样式、JS函数），图表PNG导出/分享功能保留不受影响"
     ]},
-    { version: '1.7.0', date: '2026-08-26', tag: '新增', items: [
-        '图表支持长按保存为 PNG 图片',
-        '补卡弹窗默认时间改为当前时间',
-        '适配系统深色模式（跟随 prefers-color-scheme）'
+    { version: '1.10.7', date: '2026-09-02', tag: '修复', items: [
+        "修复图表【本月/本周】范围不跟随日历选中日期：点击日历任意日期、切换上月/下周时，本月/本周统计与图表实时刷新为选中日所在月/周（自定义范围不受影响）"
+    ]},
+    { version: '1.10.6', date: '2026-09-02', tag: '修复', items: [
+        "修复夜班跨天打卡日期归属：9.1夜班过0点后打卡，仅在日历选中【今天】时自动回退到夜班起始日(昨天)，已选中昨天则保持不动，避免重复减一天错归到更早日期"
+    ]},
+    { version: '1.10.5', date: '2026-09-01', tag: '优化', items: [
+        "统计页图表视觉美化：柱状图改为渐变填充+圆角，折线图加半透明面积渐变，达标线改为绿色实线并加 🎯 图标，新增左下角图例"
+    ]},
+    { version: '1.10.4', date: '2026-09-01', tag: '优化', items: [
+        "打卡页「今日统计」默认展开，进入即显示上午/下午四个打卡时段，无需手动点开"
+    ]},
+    { version: '1.10.3', date: '2026-09-01', tag: '修复', items: [
+        "修复打开App时日期默认选中最近打卡日而非今天的问题，现默认始终选中当天"
+    ]},
+    { version: '1.10.2', date: '2026-09-01', tag: '优化', items: [
+        "统计页「每日打卡记录」过滤掉无打卡记录的日期：四个打卡时段（上午上班/下班、下午上班/下班）全部为空的不显示，列表只保留有实际打卡的日期"
+    ]},
+    { version: '1.10.1', date: '2026-09-01', tag: '优化', items: [
+        "移除统计页「每日打卡记录」区块内重复的本月/本周统计卡片，统计卡片仅在 Tab 顶部渲染一次，单一数据源避免不同步",
+        "renderHistoryStats 精简为只驱动顶部 tab* 卡片，下方区块专注「日期筛选 + 打卡记录列表」，职责更清晰"
+    ]},
+    { version: '1.10.0', date: '2026-09-01', tag: '优化', items: [
+        "script.js 全面重构：变量声明 var → const/let、状态管理移除 defineProperty Hack 改为 getCurrentStatus()、日历点击/长按改为事件委托（减少事件监听器）",
+        "图表绘制引擎合并：抽取通用 renderChartToCtx，页面展示（drawChart）与导出图片（paintChartToCanvas）共用，消除重复绘图代码",
+        "「查看每日打卡记录」由设置页迁入统计 Tab 内，作为常驻区块（本月/本周统计卡片 + 日期筛选 + 记录列表），进入即刷新、无需弹窗",
+        "renderHistoryStats 同时驱动 Tab 顶部与记录区块的统计卡片，数据一致；删除记录弹窗相关冗余逻辑"
+    ]},
+    { version: '1.9.0', date: '2026-08-30', tag: '新增', items: [
+        "首页底部 Tab 页：📍打卡（日历+今日统计+打卡）、📊统计（本月/本周+图表），一键切换",
+        "统计页新增周平均工时、月平均工时（=总工时÷打卡天数），保留总工时与打卡天数，跟随日历选中日",
+        "loadAboutData 增加 fetch 存在性防护，file:// 及无网络环境下初始化不再中断"
+    ]},
+    { version: '1.8.1', date: '2026-08-30', tag: '修复', items: [
+        "修复记录页本周/本月统计不跟随日历选中日的异常：点击日历任意日期、切换上月/下周时，统计卡片实时刷新",
+        "初始化默认选中「最近一个有数据的日期」，避免首次打开本周/本月统计恒为 0；补全记录页统计卡片样式"
+    ]},
+    { version: '1.8.0', date: '2026-08-26', tag: '新增', items: [
+        "首页平均工时 / 打卡天数 / 总工时迁移至「记录页」，记录页顶部新增本月·本周双栏统计卡片（含月平均、周平均）"
+    ]},
+    { version: '1.7.2', date: '2026-08-26', tag: '修复', items: [
+        "修复夜班跨零点工时计算；修复打卡按钮进度变色在部分机型不生效"
+    ]},
+    { version: '1.7.0', date: '2026-08-26', tag: '优化', items: [
+        "打卡按钮随进度变色：蓝(0)→橙(1~2)→绿(3~4)→灰(满)"
     ]},
     { version: '1.6.0', date: '2026-08-26', tag: '新增', items: [
-        '支持自定义白/夜班时间段（设置 → 自定义班别时间段），即时生效并持久化'
+        "支持自定义白/夜班时间段（设置 → 自定义班别时间段），即时生效并持久化"
     ]},
     { version: '1.4.0', date: '2026-08-26', tag: '新增', items: [
-        '新增「关于 / 更新记录」入口，更新日志改为 JSON 外部维护',
-        '新增「检查更新」功能'
+        "「关于 / 更新记录」入口，更新日志改为 JSON 外部维护",
+        "新增「检查更新」功能"
     ]},
     { version: '1.3.0', date: '2026-08-19', tag: '优化', items: [
-        '备份拆分为「下载备份文件」与「复制备份数据」两项独立功能'
+        "备份拆分为「下载备份文件」与「复制备份数据」两项独立功能"
     ]},
     { version: '1.2.0', date: '2026-08-12', tag: '新增', items: [
-        '新增本月工时趋势图表（柱状图/趋势线可切换）'
+        "新增本月工时趋势图表（柱状图/趋势线可切换）"
     ]},
     { version: '1.1.0', date: '2026-08-05', tag: '优化', items: [
-        '修复夜班跨天日期归属与删除记录后状态引用问题',
-        '日期点击不再弹补卡，改为长按 600ms 触发'
+        "修复夜班跨天日期归属与删除记录后状态引用问题",
+        "日期点击不再弹补卡，改为长按 600ms 触发"
     ]},
     { version: '1.0.0', date: '2026-07-29', tag: '发布', items: [
-        '首发：日历打卡、白/夜排班、补卡、每日记录查看',
-        '本月工时统计、报表 CSV 导出与分享、数据备份与导入'
+        "首发：日历打卡、白/夜排班、补卡、每日记录查看",
+        "本月工时统计、报表 CSV 导出与分享、数据备份与导入"
     ]}
 ];
+/* 从外部 JSON 加载更新日志 + 当前版本号；失败则保持内存兜底 */
 function loadAboutData(cb) {
     cb = cb || function () {};
+    if (typeof fetch === 'undefined') { renderChangelog(); return cb(); }
     var done = 0, total = 2, ready = function () { if (++done >= total) { renderChangelog(); cb(); } };
     fetch('version.json', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : Promise.reject(); }).then(function (j) { if (j && j.version) APP_VERSION = String(j.version); }).catch(function () {}).then(ready);
     fetch('changelog.json', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : Promise.reject(); }).then(function (j) { if (j && Array.isArray(j) && j.length) CHANGELOG = j; }).catch(function () {}).then(ready);
@@ -411,13 +419,14 @@ function renderChangelog() {
     box.innerHTML = '';
     CHANGELOG.forEach(function (log) {
         var item = document.createElement('div'); item.className = 'changelog-item';
-        var tagVal = log.tag || log.type || '优化';
+        var tagVal = log.tag || log.type || '优化', tagDisp = log.tag || log.type || '优化';
         var tagCls = 'tag-' + ({'新增':'new','优化':'opt','修复':'fix','发布':'rel'}[tagVal] || 'opt');
-        var html = '<div class="changelog-head"><span class="changelog-version">v' + log.version + '</span><span class="changelog-tag ' + tagCls + '">' + tagVal + '</span><span class="changelog-date">' + log.date + '</span></div><ul class="changelog-items">';
+        var html = '<div class="changelog-head"><span class="changelog-version">v' + log.version + '</span><span class="changelog-tag ' + tagCls + '">' + tagDisp + '</span><span class="changelog-date">' + log.date + '</span></div><ul class="changelog-items">';
         (log.items || []).forEach(function (t) { html += '<li>' + (typeof t === 'string' ? t : t.text || '') + '</li>'; });
         html += '</ul>'; item.innerHTML = html; box.appendChild(item);
     });
 }
+/* 比对远端 version.json，判断是否有新版本 */
 function checkForUpdates() {
     var btn = document.getElementById('checkUpdateBtn'); if (btn) { btn.disabled = true; btn.innerText = '检查中…'; }
     var onDone = function (msg) { showToast(msg); if (btn) { btn.disabled = false; btn.innerText = '检查更新'; } };
@@ -431,24 +440,69 @@ function checkForUpdates() {
 function openAbout() { closeSettings(); document.getElementById('aboutVersion').innerText = APP_VERSION; renderChangelog(); document.getElementById('aboutModal').classList.add('show'); }
 function closeAbout() { document.getElementById('aboutModal').classList.remove('show'); }
 
+/* 生成一对打卡时段（如 上午上班/上午下班）的行内 HTML：标签 + 时间，时间缺失时显示 --:--:-- 并置灰 */
+function pairHtml(label1, label2, t1, t2) {
+    return '<div class="history-pair">'
+         +   '<div class="history-row"><span class="history-label">' + label1 + '</span><span class="history-time ' + (t1 ? 'done' : 'pending') + '">' + (t1 || '--:--:--') + '</span></div>'
+         +   '<div class="history-row"><span class="history-label">' + label2 + '</span><span class="history-time ' + (t2 ? 'done' : 'pending') + '">' + (t2 || '--:--:--') + '</span></div>'
+         + '</div>';
+}
+/* 删除某一日的全部打卡记录（整卡删除，配合卡片右上角垃圾桶图标） */
+function deleteWholeRecord(ds) {
+    if (!confirm('确定删除 ' + ds + ' 的全部打卡记录吗？')) return;
+    if (!allData[ds]) return;
+    allData[ds].status = { s1: null, e1: null, s2: null, e2: null };
+    /* 若删除后四个时段全空，直接移除该日，避免列表残留空卡片 */
+    var st = allData[ds].status;
+    if (!st.s1 && !st.e1 && !st.s2 && !st.e2) delete allData[ds];
+    invalidateMonthCache(); saveData();
+    if (ds === getLocalDateStr(selectedDate)) status = allData[ds] ? allData[ds].status : { s1: null, e1: null, s2: null, e2: null };
+    renderHistoryList(); renderCalendar(); updateStats(); updateSelectedLabel(); drawChart(); showToast("删除成功");
+}
+
 function renderHistoryList() {
     var ld = document.getElementById('historyList'); ld.innerHTML = ""; var sd = document.getElementById('historyStartDate').value, ed = document.getElementById('historyEndDate').value;
     if (!sd || !ed) { ld.innerHTML = '<div style="text-align:center;color:#999;padding:20px;">请选择日期范围后点击查询</div>'; return; }
     var fds = Object.keys(allData).sort(function (a, b) { return b.localeCompare(a); }).filter(function (d) { return d >= sd && d <= ed; });
+    /* 🌟 过滤掉没有打卡记录的日期：四个打卡时段全部为空才算"无记录" */
+    fds = fds.filter(function (ds) {
+        var st = allData[ds] && allData[ds].status;
+        if (!st) return false;
+        return !!(st.s1 || st.e1 || st.s2 || st.e2);
+    });
     if (fds.length === 0) { ld.innerHTML = '<div style="text-align:center;color:#999;padding:20px;">在 ' + sd + ' 至 ' + ed + ' 期间，暂无打卡记录</div>'; return; }
     fds.forEach(function (ds) {
         var dy = allData[ds], st = dy.status, dt = dy.shiftType || 'day', d1 = getDuration(st.s1, st.e1), d2 = getDuration(st.s2, st.e2), th = (d1 + d2).toFixed(2);
         var steps = shiftsConfig[dt].steps, keys = ['s1', 'e1', 's2', 'e2'], it = document.createElement('div'); it.className = 'history-item';
-        var h = '<div class="history-item-header"><span class="history-date">' + ds + '</span><span class="history-total">总工时: ' + th + ' h</span></div><div class="history-item-body">';
-        for (var i = 0; i < steps.length; i++) { var k = keys[i], tm = st[k]; h += '<div class="history-row"><span class="history-label">' + steps[i] + '</span><span class="history-time ' + (tm ? 'done' : 'pending') + '">' + (tm || '--:--:--') + '</span>' + (tm ? '<span class="history-del" data-date="' + ds + '" data-key="' + k + '">删除</span>' : '') + '</div>'; }
-        h += '</div>'; it.innerHTML = h; ld.appendChild(it);
+        var shiftName = shiftsConfig[dt] && shiftsConfig[dt].name ? shiftsConfig[dt].name : (dt === 'night' ? '夜班' : '白班');
+        /* 卡片头部：日期 + 班次标签（无删除按钮，删除统一在打卡页今日统计中按条操作） */
+        var h = '<div class="history-item-header">'
+              +   '<div class="history-head-left">'
+              +     '<span class="history-date">' + ds + '</span>'
+              +     '<span class="history-shift-tag ' + (dt === 'night' ? 'night' : 'day') + '">' + shiftName + '</span>'
+              +   '</div>'
+              + '</div>'
+              /* 中间：四个时间两两并排（上午上班/下班 与 下午上班/下午下班） */
+              + '<div class="history-item-body">'
+              +   '<div class="history-col">'
+              +     pairHtml(steps[0], steps[1], st.s1, st.e1)
+              +   '</div>'
+              +   '<div class="history-col">'
+              +     pairHtml(steps[2], steps[3], st.s2, st.e2)
+              +   '</div>'
+              + '</div>'
+              /* 底部：当日总工时，数值高亮 */
+              + '<div class="history-item-footer">'
+              +   '<span class="history-footer-label">当日总工时</span>'
+              +   '<span class="history-footer-hours"><b>' + th + '</b> h</span>'
+              + '</div>';
+        it.innerHTML = h; ld.appendChild(it);
     });
-    ld.querySelectorAll('.history-del').forEach(function (b) { b.addEventListener('click', function () { deleteRecordByDate(b.dataset.date, b.dataset.key); }); });
-    /* 查询后同步刷新统计卡片（范围变化可能影响展示语义；月/周统计固定按日历当前月/周） */
-    renderHistoryStats();
 }
 
-/* ============ 下载触发（兼容移动端 / Safari / standalone） ============ */
+/* 触发文件下载（兼容移动端 / Safari / standalone PWA）。
+   先尝试动态 <a download>.click()（桌面/多数浏览器有效）；
+   若 click 后未真正开始下载（移动端/Safari/standalone 常见），兜底用 window.open(blobUrl) 触发下载/预览。 */
 function triggerDownload(fn, ct, mt) {
     try {
         var b = (ct instanceof Blob) ? ct : new Blob([ct], { type: mt }), u = URL.createObjectURL(b);
@@ -462,17 +516,21 @@ function triggerDownload(fn, ct, mt) {
         return true;
     } catch (e) { return false; }
 }
+/* 下载文本/CSV/JSON。统一走 blob（GitHub Pages + PWA 下最可靠），不再用 data: URI 兜底 */
 function downloadFile(fn, ct, mt) { triggerDownload(fn, ct, mt); }
 
-/* ============ 备份 ============ */
+/* ============ 备份：下载文件 / 复制数据 两个独立功能 ============ */
 function buildBackupJSON() { return JSON.stringify(allData, null, 0); }
 function buildBackupFileName() { var t = new Date(); return '工时记录备份_' + t.getFullYear() + pad(t.getMonth() + 1) + pad(t.getDate()) + '_' + pad(t.getHours()) + pad(t.getMinutes()) + '.json'; }
+/* 仅下载备份文件 */
 function downloadBackup() {
-    var dlOk = triggerDownload(buildBackupFileName(), buildBackupJSON(), 'application/json');
+    var ds = buildBackupJSON(), fn = buildBackupFileName();
+    var dlOk = triggerDownload(fn, ds, 'application/json');
     closeSettings();
     if (dlOk) showToast("✅ 备份文件已开始下载");
     else showToast("❌ 下载失败，请重试", true);
 }
+/* 仅复制备份数据到剪贴板（失败时弹出兜底文本框） */
 function copyData() {
     var ds = buildBackupJSON();
     var showFallback = function () { var m = document.getElementById('copyFallbackModal'); document.getElementById('copyFallbackText').value = ds; m.classList.add('show'); };
@@ -480,13 +538,15 @@ function copyData() {
         navigator.clipboard.writeText(ds).then(function () { closeSettings(); showToast("📋 备份数据已复制到剪贴板"); }).catch(function () { showFallback(); });
     } else { showFallback(); }
 }
+/* 从备份文件导入：点击隐藏 file input 选择本地下载的备份 .json，
+   读取并解析后二次确认再覆盖当前数据，与「下载备份文件」形成闭环。 */
 function openImportFromFile() {
     closeSettings();
     var inp = document.getElementById('importFileInput');
-    if (!inp) { openImportModal(); return; }
-    inp.value = '';
+    if (!inp) { openImportModal(); return; } /* 兜底：无 file input 时走粘贴导入 */
+    inp.value = ''; /* 允许重复选择同一文件 */
     if (inp._bound) { inp.click(); return; }
-    inp._bounded = true;
+    inp._bound = true;
     inp.addEventListener('change', function () {
         var f = inp.files && inp.files[0]; if (!f) return;
         var reader = new FileReader();
@@ -498,11 +558,12 @@ function openImportFromFile() {
                 var dayCount = Object.keys(id).length;
                 if (!confirm("导入将用该备份覆盖当前所有数据（共 " + dayCount + " 条日期记录），确定继续吗？")) return;
                 allData = id; invalidateMonthCache(); saveData();
-                var cd = getCurrentData(); currentShiftType = cd.shiftType || currentShiftType;
+                /* 同步当前选中日期引用 + 排班类型 */
+                var cd = getCurrentData(); status = cd.status; currentShiftType = cd.shiftType || currentShiftType;
                 els.shiftSelect.value = currentShiftType;
                 (calDefaultExpanded ? renderCalendar() : renderWeekView());
                 document.getElementById('collapseCal').innerText = calDefaultExpanded ? '▽' : '△';
-                syncChartWithCalView(calDefaultExpanded); updateSelectedLabel(); updateButtonText(); updateStats(); drawChart(); renderHistoryStats();
+                syncChartWithCalView(calDefaultExpanded); updateSelectedLabel(); updateButtonText(); updateStats(); drawChart();
                 showToast("✅ 已从备份文件导入 " + dayCount + " 条记录");
             } catch (e) { showToast("❌ 导入失败：文件不是合法 JSON", true); }
         };
@@ -511,56 +572,20 @@ function openImportFromFile() {
     });
     inp.click();
 }
-function openImportModal() {
-    closeSettings(); var v = prompt("请粘贴之前备份的 JSON 数据："); if (!v) return;
-    try {
-        var id = JSON.parse(v); if (!id || typeof id !== 'object' || Array.isArray(id)) { showToast("❌ 备份格式不正确", true); return; }
-        var dayCount = Object.keys(id).length;
-        if (confirm("导入将覆盖当前所有数据（共 " + dayCount + " 条日期记录），确定继续吗？")) {
-            allData = id; invalidateMonthCache(); saveData();
-            var cd = getCurrentData(); currentShiftType = cd.shiftType || currentShiftType; els.shiftSelect.value = currentShiftType;
-            (calDefaultExpanded ? renderCalendar() : renderWeekView());
-            document.getElementById('collapseCal').innerText = calDefaultExpanded ? '▽' : '△';
-            syncChartWithCalView(calDefaultExpanded); updateSelectedLabel(); updateButtonText(); updateStats(); drawChart(); renderHistoryStats();
-            showToast("✅ 数据导入成功（" + dayCount + " 条）");
-        }
-    } catch (e) { showToast("❌ 导入失败：格式不正确", true); }
-}
-function clearAllData() {
-    if (!confirm("【警告】将删除本地所有打卡记录！\n建议先备份。是否继续？")) return;
-    if (!confirm("最后确认：真的清空所有数据吗？不可撤销！")) return;
-    allData = {}; if (storageAvailable) localStorage.removeItem('attendanceData'); invalidateMonthCache(); saveData();
-    renderCalendar(); updateSelectedLabel(); updateStats(); drawChart(); renderHistoryStats(); showToast("所有数据已清空"); closeSettings();
-}
+/* 粘贴导入（高级兜底）：手动粘贴备份 JSON 文本导入 */
+function openImportModal() { closeSettings(); var v = prompt("请粘贴之前备份的 JSON 数据："); if (!v) return; try { var id = JSON.parse(v); if (!id || typeof id !== 'object' || Array.isArray(id)) { showToast("❌ 备份格式不正确", true); return; } var dayCount = Object.keys(id).length; if (confirm("导入将覆盖当前所有数据（共 " + dayCount + " 条日期记录），确定继续吗？")) { allData = id; invalidateMonthCache(); saveData(); var cd = getCurrentData(); status = cd.status; currentShiftType = cd.shiftType || currentShiftType; els.shiftSelect.value = currentShiftType; (calDefaultExpanded ? renderCalendar() : renderWeekView()); document.getElementById('collapseCal').innerText = calDefaultExpanded ? '▽' : '△'; syncChartWithCalView(calDefaultExpanded); updateSelectedLabel(); updateButtonText(); updateStats(); drawChart(); showToast("✅ 数据导入成功（" + dayCount + " 条）"); } } catch (e) { showToast("❌ 导入失败：格式不正确", true); } }
+function clearAllData() { if (!confirm("【警告】将删除本地所有打卡记录！\n建议先备份。是否继续？")) return; if (!confirm("最后确认：真的清空所有数据吗？不可撤销！")) return; allData = {}; if (storageAvailable) localStorage.removeItem('attendanceData'); invalidateMonthCache(); status = getCurrentData().status; saveData(); renderCalendar(); updateSelectedLabel(); updateStats(); drawChart(); showToast("所有数据已清空"); closeSettings(); }
 
 /* ============ 补卡 ============ */
-function openMakeupModal(pd) {
-    var dt = pd || new Date(), dv = getLocalDateStr(dt);
-    document.getElementById('makeupDate').value = dv;
-    document.getElementById('makeupTime').value = getCurrentTimeStr();
-    var es = (allData[dv] && allData[dv].shiftType) || currentShiftType, sl = document.getElementById('makeupType');
-    sl.innerHTML = "";
-    shiftsConfig[es].steps.forEach(function (s, i) { var o = document.createElement('option'); o.value = shiftsConfig[es].keys[i]; o.innerText = s; sl.appendChild(o); });
-    document.getElementById('makeupModal').classList.add('show');
-}
+function openMakeupModal(pd) { var dt = pd || new Date(), dv = getLocalDateStr(dt); document.getElementById('makeupDate').value = dv; document.getElementById('makeupTime').value = getCurrentTimeStr(); var es = (allData[dv] && allData[dv].shiftType) || currentShiftType, sl = document.getElementById('makeupType'); sl.innerHTML = ""; shiftsConfig[es].steps.forEach(function (s, i) { var o = document.createElement('option'); o.value = shiftsConfig[es].keys[i]; o.innerText = s; sl.appendChild(o); }); document.getElementById('makeupModal').classList.add('show'); }
 function closeMakeupModal() { document.getElementById('makeupModal').classList.remove('show'); }
-function submitMakeup() {
-    var dt = document.getElementById('makeupDate').value, ky = document.getElementById('makeupType').value, tm = document.getElementById('makeupTime').value;
-    if (!dt || !tm) { showToast("请完整选择日期和时间！", true); return; }
-    var es = (allData[dt] && allData[dt].shiftType) || currentShiftType;
-    if (!allData[dt]) allData[dt] = { shiftType: es, status: { s1: null, e1: null, s2: null, e2: null } };
-    allData[dt].status[ky] = tm;
-    var p2 = dt.split('-'); selectedDate = new Date(+p2[0], +p2[1] - 1, +p2[2]);
-    currentShiftType = allData[dt].shiftType || currentShiftType; els.shiftSelect.value = currentShiftType;
-    currentMonth = { year: selectedDate.getFullYear(), month: selectedDate.getMonth() };
-    invalidateMonthCache(); saveData(); renderCalendar(); updateSelectedLabel(); updateStats(); drawChart(); renderHistoryStats(); closeMakeupModal();
-    showToast("补卡成功（" + dt + " " + ky + ": " + tm + "）");
-}
+function submitMakeup() { var dt = document.getElementById('makeupDate').value, ky = document.getElementById('makeupType').value, tm = document.getElementById('makeupTime').value; if (!dt || !tm) { showToast("请完整选择日期和时间！", true); return; } var es = (allData[dt] && allData[dt].shiftType) || currentShiftType; if (!allData[dt]) allData[dt] = { shiftType: es, status: { s1: null, e1: null, s2: null, e2: null } }; allData[dt].status[ky] = tm; var p2 = dt.split('-'); selectedDate = new Date(+p2[0], +p2[1] - 1, +p2[2]); currentShiftType = allData[dt].shiftType || currentShiftType; els.shiftSelect.value = currentShiftType; status = getCurrentData().status; currentMonth = { year: selectedDate.getFullYear(), month: selectedDate.getMonth() }; invalidateMonthCache(); saveData(); renderCalendar(); updateSelectedLabel(); updateStats(); drawChart(); closeMakeupModal(); showToast("补卡成功（" + dt + " " + ky + ": " + tm + "）"); }
 
 /* ============ 自定义班别时间段 ============ */
 function openShiftSettings() {
     closeSettings();
     var m = document.getElementById('shiftSettingsModal'); if (!m) return;
+    /* 用当前生效配置填充表单 */
     var fill = function (prefix, periods) {
         for (var i = 0; i < 2; i++) {
             var p = periods[i] || { start: '00:00', end: '00:00' };
@@ -573,6 +598,7 @@ function openShiftSettings() {
     m.classList.add('show');
 }
 function closeShiftSettings() { var m = document.getElementById('shiftSettingsModal'); if (m) m.classList.remove('show'); }
+/* 从表单读取并校验某个班别的时段 */
 function readShiftPeriods(prefix) {
     var ps = [];
     for (var i = 0; i < 2; i++) {
@@ -590,8 +616,9 @@ function applyShiftSettings() {
     shiftsConfig.day.periods = dayR.periods; shiftsConfig.day.text = buildShiftText(dayR.periods);
     shiftsConfig.night.periods = nightR.periods; shiftsConfig.night.text = buildShiftText(nightR.periods);
     saveShiftSchedules();
+    /* 刷新当前选中日期的排班文本 + 按钮/统计 */
     els.shiftText.innerText = '排班时段: ' + shiftsConfig[currentShiftType].text;
-    updateButtonText(); updateStats(); drawChart(); renderHistoryStats();
+    updateButtonText(); updateStats(); drawChart();
     closeShiftSettings(); showToast("✅ 班别时间段已更新");
 }
 function resetShiftSettings() {
@@ -599,25 +626,28 @@ function resetShiftSettings() {
     shiftsConfig.day = cloneSchedule(DEFAULT_SCHEDULES.day); shiftsConfig.night = cloneSchedule(DEFAULT_SCHEDULES.night);
     saveShiftSchedules();
     els.shiftText.innerText = '排班时段: ' + shiftsConfig[currentShiftType].text;
-    updateButtonText(); updateStats(); drawChart(); renderHistoryStats();
+    updateButtonText(); updateStats(); drawChart();
     closeShiftSettings(); showToast("已恢复默认班别时间段");
 }
 
 /* ============ 图表可视化（Canvas，零依赖） ============ */
-var chartState = { type: 'line', range: 'month', customStart: '', customEnd: '' };
+var chartState = { type: 'line', range: 'month', customStart: '', customEnd: '' }; /* type: bar|line; range: month|week|custom */
+/* 自定义达标线（小时），默认 6，持久化到 localStorage */
 var TARGET_DEFAULT = 6;
 function getTargetHours() {
     try { var v = parseFloat(localStorage.getItem('chartTargetHours')); if (!isNaN(v) && v > 0) return v; } catch (e) {}
     return TARGET_DEFAULT;
 }
 function setTargetHours(v) {
-    var nv = Math.max(0.5, Math.min(24, v));
+    var nv = Math.max(0.5, Math.min(24, v)); /* 限制在 0.5~24 之间 */
     if (storageAvailable) try { localStorage.setItem('chartTargetHours', String(nv)); } catch (e) {}
     return nv;
 }
 var chartTargetHours = getTargetHours();
 function getChartSeries() {
-    var range = chartState.range, t = new Date(), y = t.getFullYear(), m = t.getMonth();
+    /* 按当前 chartState.range 返回按日排序的 [{date,ds,total,hasRecord}] */
+    /* ★ 本月/本周基于「日历选中日 selectedDate」，跟随选中日期变化；自定义则用缓存起止 */
+    var range = chartState.range, t = new Date(selectedDate), y = t.getFullYear(), m = t.getMonth();
     var start, end;
     if (range === 'month') { start = new Date(y, m, 1); end = new Date(y, m + 1, 0); }
     else if (range === 'week') { var w = getWeekRange(t); start = new Date(w.mon); end = new Date(w.sun); }
@@ -633,23 +663,28 @@ function getChartSeries() {
     return arr;
 }
 function getChartRangeLabel() {
-    var range = chartState.range, t = new Date(), y = t.getFullYear(), m = t.getMonth();
+    var range = chartState.range, t = new Date(selectedDate), y = t.getFullYear(), m = t.getMonth();
     if (range === 'month') return (m + 1) + '月';
     if (range === 'week') { var w = getWeekRange(t); return '本周 ' + (w.mon.getMonth() + 1) + '/' + w.mon.getDate() + '-' + (w.sun.getMonth() + 1) + '/' + w.sun.getDate(); }
     if (chartState.customStart && chartState.customEnd) return chartState.customStart.slice(5) + ' ~ ' + chartState.customEnd.slice(5);
     return (m + 1) + '月';
 }
 function setupCanvas(canvas) {
+    if (!canvas) return null;
     var dpr = window.devicePixelRatio || 1, rect = canvas.getBoundingClientRect();
-    var w = Math.max(1, rect.width), h = Math.max(1, rect.height);
-    canvas.width = w * dpr; canvas.height = h * dpr;
+    if (!rect.width || !rect.height) return null;
+    canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
     var ctx = canvas.getContext('2d');
-    if (!ctx) return null; /* canvas 上下文不可用时（被隐藏、沙箱环境、上下文丢失）安全退出 */
+    if (!ctx) return null;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    return { ctx: ctx, w: w, h: h, dpr: dpr };
+    return { ctx: ctx, w: rect.width, h: rect.height, dpr: dpr };
 }
 function drawChart() {
     var canvas = document.getElementById('hoursChart');
+    if (!canvas) return;
+    var setup = setupCanvas(canvas);
+    if (!setup) return;
+    var ctx = setup.ctx, W = setup.w, H = setup.h;
     var emptyEl = document.getElementById('chartEmpty');
     var titleEl = document.getElementById('chartTitle');
     if (titleEl) titleEl.innerText = '📊 工时趋势 · ' + getChartRangeLabel();
@@ -657,9 +692,6 @@ function drawChart() {
     var hasAny = series.some(function (d) { return d.total > 0; });
     if (!hasAny) { emptyEl.style.display = 'flex'; canvas.style.display = 'none'; return; }
     emptyEl.style.display = 'none'; canvas.style.display = 'block';
-    var setup = setupCanvas(canvas);
-    if (!setup) return; /* 上下文不可用时跳过绘制，不阻断后续逻辑（统计刷新等） */
-    var ctx = setup.ctx, W = setup.w, H = setup.h;
     var pad = { top: 18, right: 14, bottom: 26, left: 34 }, cw = W - pad.left - pad.right, ch = H - pad.top - pad.bottom;
     var maxV = Math.max.apply(null, series.map(function (d) { return d.total; }).concat([8])) * 1.15;
     var yTicks = 4;
@@ -715,13 +747,16 @@ function setChartRange(val) {
     document.querySelectorAll('.chart-range-opt').forEach(function (o) { o.classList.remove('selected'); });
     var sel = document.querySelector('.chart-range-opt[data-val="' + val + '"]'); if (sel) sel.classList.add('selected');
     var customEl = document.getElementById('chartCustom');
-    customEl.style.display = val === 'custom' ? 'flex' : 'none';
+    if (val === 'custom') { customEl.style.display = 'flex'; }
+    else { customEl.style.display = 'none'; }
     drawChart();
 }
+/* 动态更新图例中的达标阈值文字 */
 function updateChartLegend() {
     var el = document.getElementById('chartLegend达标'); if (el) el.innerText = '当日达标(≥' + chartTargetHours + 'h)';
     var sv = document.getElementById('settingsTargetVal'); if (sv) sv.innerText = chartTargetHours + 'h';
 }
+/* 将图表绘制到指定 canvas（带白色背景/标题/图例），用于导出/分享 */
 function paintChartToCanvas(targetCanvas) {
     var series = getChartSeries();
     var hasAny = series.some(function (d) { return d.total > 0; });
@@ -743,6 +778,7 @@ function paintChartToCanvas(targetCanvas) {
     var pts = series.map(function (d, i) { return { x: pad.left + bw * (i + 0.5), y: pad.top + ch - (d.total / maxV) * ch, d: d }; });
     if (chartState.type === 'bar') { for (var i = 0; i < n; i++) { var d = series[i], barW = Math.max(4, bw * 0.6); if (d.total <= 0) continue; var bx = pad.left + bw * (i + 0.5) - barW / 2, by = pad.top + ch - (d.total / maxV) * ch, bh = (d.total / maxV) * ch; ctx.fillStyle = d.total >= chartTargetHours ? '#34c759' : '#4a90e2'; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx, by, barW, bh, [3, 3, 0, 0]) : ctx.rect(bx, by, barW, bh); ctx.fill(); } }
     else { ctx.strokeStyle = '#4a90e2'; ctx.lineWidth = 2; ctx.beginPath(); pts.forEach(function (p, i) { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); }); ctx.stroke(); pts.forEach(function (p) { if (p.d.total > 0) { ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2); ctx.fillStyle = p.d.total >= chartTargetHours ? '#34c759' : '#4a90e2'; ctx.fill(); } }); }
+    /* 图例 */
     ctx.font = '11px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     var lx = pad.left + 6, ly = H - 14;
     ctx.fillStyle = '#4a90e2'; ctx.fillRect(lx, ly - 4, 12, 8); ctx.fillStyle = '#8e8e93'; ctx.fillText('每日工时', lx + 18, ly);
@@ -777,11 +813,13 @@ function initChart() {
     document.querySelectorAll('.chart-range-opt').forEach(function (opt) { opt.addEventListener('click', function () { setChartRange(opt.dataset.val); }); });
     var t = new Date(); document.getElementById('chartCustomStart').value = getLocalDateStr(new Date(t.getFullYear(), t.getMonth(), 1)); document.getElementById('chartCustomEnd').value = getLocalDateStr(t);
     document.getElementById('chartCustomApply').addEventListener('click', function () { var s = document.getElementById('chartCustomStart').value, e = document.getElementById('chartCustomEnd').value; if (!s || !e) { showToast("请选择完整起止日期", true); return; } if (s > e) { showToast("开始日期不能晚于结束日期", true); return; } chartState.customStart = s; chartState.customEnd = e; drawChart(); });
+    // ---- 图表 resize 防抖优化 ----
     var chartResizeTimer;
     window.addEventListener('resize', function () {
         clearTimeout(chartResizeTimer);
         chartResizeTimer = setTimeout(drawChart, 200);
     });
+    /* 达标线自定义输入 */
     var targetInput = document.getElementById('chartTargetInput');
     if (targetInput) {
         targetInput.value = chartTargetHours;
@@ -792,6 +830,7 @@ function initChart() {
         });
     }
     updateChartLegend(); drawChart();
+    /* 设置弹窗：达标线设置入口（主页输入框已移除，改为弹窗内 prompt 输入） */
     var targetSettingItem = document.getElementById('targetSettingItem');
     if (targetSettingItem) {
         targetSettingItem.addEventListener('click', function () {
@@ -807,48 +846,74 @@ function initChart() {
     }
 }
 
-/* ============ 报表 ============ */
-function openReportRangeModal(mode) { var m = document.getElementById('reportRangeModal'); m.classList.add('show'); m.dataset.mode = mode; document.querySelectorAll('.rpt-option').forEach(function (o) { o.classList.remove('selected'); }); document.querySelector('.rpt-option[data-val="month"]').classList.add('selected'); document.getElementById('rptRangeCustom').style.display = 'none'; }
-function closeReportRangeModal() { document.getElementById('reportRangeModal').classList.remove('show'); }
-function getReportRange(op) {
-    var t = new Date(), y = t.getFullYear(), m = t.getMonth();
-    if (op === 'month') return { start: getLocalDateStr(new Date(y, m, 1)), end: getLocalDateStr(new Date(y, m + 1, 0)), label: '本月' };
-    if (op === 'week') { var w = t.getDay(); if (w === 0) w = 7; var mn = new Date(t); mn.setDate(t.getDate() - w + 1); var su = new Date(mn); su.setDate(mn.getDate() + 6); return { start: getLocalDateStr(mn), end: getLocalDateStr(su), label: '本周' }; }
-    var s = document.getElementById('rptRangeStart').value, e = document.getElementById('rptRangeEnd').value;
-    if (!s || !e) { showToast("请选择完整起止日期", true); return null; } if (s > e) { showToast("开始日期不能晚于结束日期", true); return null; }
-    return { start: s, end: e, label: '自定义_' + s + '_' + e };
-}
-function buildReport(range) {
-    var thr = chartTargetHours;
-    var hd = ['日期', '排班', '上午上班', '上午下班', '下午上班', '下午下班', '上午工时', '下午工时', '当日总工时', '是否达标(≥' + thr + 'h)'], rows = [hd], lines = ['📊 工时报表 ' + range.start + ' ~ ' + range.end + '  (达标线 ' + thr + 'h)', ''], mt = 0, md = 0,达标Days = 0;
-    for (var cur = range.start; cur <= range.end; ) {
-        var ds = cur, dy = allData[ds]; if (!dy) { cur = nextDayStr(cur); continue; } var st = dy.status; if (!st.s1 && !st.e1 && !st.s2 && !st.e2) { cur = nextDayStr(cur); continue; }
-        var dt = dy.shiftType || 'day', d1 = getDuration(st.s1, st.e1), d2 = getDuration(st.s2, st.e2), tot = (d1 + d2), totStr = tot.toFixed(2); mt += tot; md++;
-        var ok2 = tot >= thr; if (ok2)达标Days++;
-        lines.push(ds + ' [' + (dt === 'night' ? '夜班' : '白班') + ']' + (ok2 ? ' ✅达标' : ''), '  ' + shiftsConfig[dt].steps[0] + ': ' + (st.s1 || '--'), '  ' + shiftsConfig[dt].steps[1] + ': ' + (st.e1 || '--'), '  ' + shiftsConfig[dt].steps[2] + ': ' + (st.s2 || '--'), '  ' + shiftsConfig[dt].steps[3] + ': ' + (st.e2 || '--'), '  当日工时: ' + totStr + 'h' + (ok2 ? ' ✅' : ''), '');
-        rows.push([ds, dt === 'night' ? '夜班' : '白班', st.s1 || '', st.e1 || '', st.s2 || '', st.e2 || '', d1.toFixed(2), d2.toFixed(2), totStr, ok2 ? '达标' : '未达标']);
-        cur = nextDayStr(cur);
-    }
-    if (md === 0) return null;
-    lines.push('─── 合计 ───', '打卡天数: ' + md + ' 天', '达标天数: ' +达标Days+ ' 天', '总工时: ' + mt.toFixed(2) + ' h', '平均工时: ' + (mt / md).toFixed(2) + ' h');
-    rows.push(['', '', '', '', '', '合计', md + '天(' +达标Days+ '天达标)', '', mt.toFixed(2),达标Days+ '/' + md]);
-    return { text: lines.join('\n'), rows: rows, monthDays: md, monthTotal: mt,达标Days:达标Days };
-}
-function exportMonthCSV() { var r = getMonthRange(), res = buildReport(r); if (!res) { showToast("本月暂无打卡记录可导出", true); return; } var csv = res.rows.map(function (r2) { return r2.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(','); }).join('\r\n'), t = new Date(), fn = '工时报表_' + t.getFullYear() + '年' + pad(t.getMonth() + 1) + '月.csv'; downloadFile(fn, '\uFEFF' + csv, 'text/csv;charset=utf-8'); showToast("📤 报表已开始下载"); }
-function shareMonthReport() { var r = getMonthRange(), res = buildReport(r); if (!res) { showToast("本月暂无打卡记录可分享", true); return; } if (navigator.share) navigator.share({ title: '工时报表', text: res.text }).then(function () { showToast("✅ 分享成功"); }).catch(function (e) { if (e.name !== 'AbortError') fallbackCopyText(res.text); }); else fallbackCopyText(res.text); }
-function fallbackCopyText(txt) { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(function () { showToast("📋 报表内容已复制到剪贴板"); }).catch(function () { textareaFallback(txt); }); else textareaFallback(txt); }
-function textareaFallback(txt) { var ta = document.createElement('textarea'); ta.value = txt; ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); showToast("📋 报表内容已复制到剪贴板"); } catch (e) { showToast("❌ 复制失败，请手动导出 CSV", true); } document.body.removeChild(ta); }
-
 /* ============ 初始化 ============ */
 els.shiftSelect.value = currentShiftType;
-ensureToast(); /* 确保 toast 容器就绪（HTML 中已预置，此处为兜底） */
+if (!document.getElementById('appToast')) { var t2 = document.createElement('div'); t2.id = 'appToast'; t2.className = 'app-toast'; document.querySelector('.app').appendChild(t2); }
 if (!storageAvailable && !sessionStorage.getItem('warnedNoStorage')) { showToast("⚠️ 当前以 file:// 打开，数据仅存内存，建议用 http(s) 打开", true); sessionStorage.setItem('warnedNoStorage', '1'); }
-var todayTag = document.getElementById('todayTag'); if (todayTag) { todayTag.style.cursor = 'pointer'; todayTag.title = '点击回到今天'; todayTag.addEventListener('click', function () { selectedDate = new Date(); currentMonth = { year: selectedDate.getFullYear(), month: selectedDate.getMonth() }; var cd = getCurrentData(); currentShiftType = cd.shiftType || currentShiftType; els.shiftSelect.value = currentShiftType; (calDefaultExpanded ? renderCalendar() : renderWeekView()); document.getElementById('collapseCal').innerText = calDefaultExpanded ? '▽' : '△'; syncChartWithCalView(calDefaultExpanded); updateSelectedLabel(); updateButtonText(); updateStats(); }); }
-updateButtonText(); (calDefaultExpanded ? renderCalendar() : renderWeekView()); document.getElementById('collapseCal').innerText = calDefaultExpanded ? '▽' : '△'; updateSelectedLabel(); initChart();
-renderHistoryStats(); /* 初始化即计算一次，供记录页打开时即时展示 */
-loadAboutData();
+var todayTag = document.getElementById('todayTag'); if (todayTag) { todayTag.style.cursor = 'pointer'; todayTag.title = '点击回到今天'; todayTag.addEventListener('click', function () { selectedDate = new Date(); currentMonth = { year: selectedDate.getFullYear(), month: selectedDate.getMonth() }; var cd = getCurrentData(); status = cd.status; currentShiftType = cd.shiftType || currentShiftType; els.shiftSelect.value = currentShiftType; (calDefaultExpanded ? renderCalendar() : renderWeekView()); document.getElementById('collapseCal').innerText = calDefaultExpanded ? '▽' : '△'; syncChartWithCalView(calDefaultExpanded); updateSelectedLabel(); updateButtonText(); updateStats(); }); }
 
-/* ============ 自动备份提醒 ============ */
+updateButtonText(); (calDefaultExpanded ? renderCalendar() : renderWeekView()); document.getElementById('collapseCal').innerText = calDefaultExpanded ? '▽' : '△'; updateSelectedLabel(); initChart();
+loadAboutData(); /* 异步加载 version.json + changelog.json，失败回退内存兜底 */
+
+/* ★ 今日统计默认展开：进入即显示上午/下午四个打卡时段，无需手动点开 */
+els.todayDetail.style.display = 'block';
+els.expandIcon.innerText = '△';
+
+/* ============ 周统计（跟随日历选中日所在自然周） ============ */
+function getWeekStats() {
+    var r = getWeekRange(selectedDate), wt = 0, wd = 0;
+    for (var d = new Date(r.mon); d <= r.sun; d.setDate(d.getDate() + 1)) {
+        var ds = getLocalDateStr(d); if (allData[ds]) { var st = allData[ds].status, tot = getDuration(st.s1, st.e1) + getDuration(st.s2, st.e2); if (tot > 0) { wt += tot; wd++; } }
+    }
+    return { total: wt, days: wd };
+}
+
+/* ============ 统计 Tab 卡片刷新（月平均 / 周平均，跟随日历选中日） ============ */
+function renderHistoryStats() {
+    var ms = getMonthStats(), ws = getWeekStats();
+    var setVal = function (id, val) { var el = document.getElementById(id); if (el) el.innerText = val; };
+    setVal('tabMonthTotal', ms.total.toFixed(2));
+    setVal('tabMonthDays', ms.days);
+    setVal('tabMonthAvg', ms.days > 0 ? (ms.total / ms.days).toFixed(2) : '0.00');
+    setVal('tabWeekTotal', ws.total.toFixed(2));
+    setVal('tabWeekDays', ws.days);
+    setVal('tabWeekAvg', ws.days > 0 ? (ws.total / ws.days).toFixed(2) : '0.00');
+    var tip = document.getElementById('tabWeekTip');
+    if (tip) {
+        var r = getWeekRange(selectedDate);
+        tip.innerText = '本周 ' + (r.mon.getMonth() + 1) + '/' + r.mon.getDate() + '~' + (r.sun.getMonth() + 1) + '/' + r.sun.getDate() + '（点击日历切换）';
+    }
+}
+
+/* ============ 底部 Tab 切换 ============ */
+function initTabbar() {
+    var items = Array.prototype.slice.call(document.querySelectorAll('.tabbar-item'));
+    var panels = { tabPunch: document.getElementById('tabPunch'), tabStats: document.getElementById('tabStats') };
+    function activate(name) {
+        items.forEach(function (it) { it.classList.toggle('active', it.getAttribute('data-tab') === name); });
+        Object.keys(panels).forEach(function (k) {
+            if (panels[k]) panels[k].classList.toggle('active', k === name);
+        });
+        if (name === 'tabStats') {
+            renderHistoryStats(); requestAnimationFrame(function () { drawChart(); });
+            /* 迁入的统计区块：进入时自动带默认范围并渲染列表 */
+            (function () { var t = new Date(), sd = document.getElementById('historyStartDate'), ed = document.getElementById('historyEndDate');
+              if (sd && !sd.value) sd.value = getLocalDateStr(new Date(t.getFullYear(), t.getMonth(), 1));
+              if (ed && !ed.value) ed.value = getLocalDateStr(t); })();
+            renderHistoryList();
+        }
+    }
+    items.forEach(function (it) {
+        it.addEventListener('click', function () { activate(it.getAttribute('data-tab')); });
+    });
+    activate('tabPunch');
+}
+
+/* 首次启动：数据迁移后统一刷新一次统计 + 初始化 Tab */
+try { renderHistoryStats(); } catch (e) { console.error('renderHistoryStats error', e); }
+try { initTabbar(); } catch (e) { console.error('initTabbar error', e); }
+
+/* ============ 自动备份提醒（新增） ============ */
 (function autoBackupRemind() {
     var recordDays = Object.keys(allData).length;
     if (recordDays > 30) {
@@ -871,22 +936,20 @@ document.getElementById('confirmMakeup').addEventListener('click', submitMakeup)
 document.getElementById('openSettingsBtn').addEventListener('click', openSettings);
 document.getElementById('closeSettingsBtn').addEventListener('click', closeSettings);
 document.getElementById('closeSettingsBtn2').addEventListener('click', closeSettings);
-document.getElementById('openHistoryItem').addEventListener('click', openRecordHistory);
-document.getElementById('closeHistoryBtn').addEventListener('click', closeHistory);
 document.getElementById('historyQueryBtn').addEventListener('click', renderHistoryList);
+    var historyRefreshBtn = document.getElementById('historyRefreshBtn');
+    if (historyRefreshBtn) historyRefreshBtn.addEventListener('click', renderHistoryList);
 document.getElementById('downloadBackupItem').addEventListener('click', downloadBackup);
 document.getElementById('copyDataItem').addEventListener('click', copyData);
 document.getElementById('importFileItem').addEventListener('click', openImportFromFile);
 document.getElementById('openImportItem').addEventListener('click', openImportModal);
 document.getElementById('clearDataItem').addEventListener('click', clearAllData);
-var exportReportItem = document.getElementById('exportReportItem');
-if (exportReportItem) exportReportItem.addEventListener('click', function () { closeSettings(); openReportRangeModal('export'); });
-var shareReportItem = document.getElementById('shareReportItem');
-if (shareReportItem) shareReportItem.addEventListener('click', function () { closeSettings(); openReportRangeModal('share'); });
 var openAboutItem = document.getElementById('openAboutItem');
 if (openAboutItem) openAboutItem.addEventListener('click', openAbout);
+/* 月历默认展开：开关初始化 + 点击切换 */
 var calSwitch = document.getElementById('calDefaultSwitch');
 function refreshCalDefaultSwitch() { if (!calSwitch) return; calSwitch.classList.toggle('on', !!calDefaultExpanded); calSwitch.setAttribute('aria-checked', calDefaultExpanded ? 'true' : 'false'); }
+/* 图表范围跟随月历视图联动：展开(月视图)->图表切本月；折叠(周视图)->图表切本周；自定义范围不动 */
 function syncChartWithCalView(expanded) {
     if (!chartState || chartState.range === 'custom') return;
     var target = expanded ? 'month' : 'week';
@@ -894,6 +957,7 @@ function syncChartWithCalView(expanded) {
 }
 function toggleCalDefault() { calDefaultExpanded = !calDefaultExpanded; saveCalDefaultExpanded(calDefaultExpanded); refreshCalDefaultSwitch(); document.getElementById('collapseCal').innerText = calDefaultExpanded ? '▽' : '△'; (calDefaultExpanded ? renderCalendar() : renderWeekView()); syncChartWithCalView(calDefaultExpanded); showToast(calDefaultExpanded ? '✅ 月历已展开为月视图' : '✅ 月历已折叠为周视图'); }
 if (calSwitch) { calSwitch.addEventListener('click', toggleCalDefault); calSwitch.addEventListener('keydown', function (e) { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleCalDefault(); } }); }
+/* 打开设置时同步开关状态 */
 var _openSettingsOrig = openSettings; openSettings = function () { refreshCalDefaultSwitch(); _openSettingsOrig(); };
 var openShiftSettingsItem = document.getElementById('openShiftSettingsItem');
 if (openShiftSettingsItem) openShiftSettingsItem.addEventListener('click', openShiftSettings);
@@ -906,39 +970,25 @@ document.getElementById('prevMonth').addEventListener('click', function () { if 
 document.getElementById('nextMonth').addEventListener('click', function () { if (document.getElementById('collapseCal').innerText === '△') changeWeek(1); else changeMonth(1); });
 document.getElementById('collapseCal').addEventListener('click', collapseCalendar);
 document.getElementById('todayStatsCard').addEventListener('click', toggleTodayDetails);
+/* 「今日统计」每条打卡记录后的删除按钮：事件委托，点击 ✕ 删除对应时段，并阻止冒泡避免触发展开/折叠 */
+document.getElementById('todayDetail').addEventListener('click', function (e) {
+    var del = e.target.closest('.detail-del'); if (!del) return;
+    e.stopPropagation();
+    deleteTodayTime(del.closest('.detail-row').dataset.key);
+});
 document.getElementById('makeupModal').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMakeupModal(); });
 document.getElementById('settingsModal').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeSettings(); });
-document.getElementById('historyModal').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeHistory(); });
-document.getElementById('reportRangeModal').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeReportRangeModal(); });
-document.querySelectorAll('.rpt-option').forEach(function (opt) { opt.addEventListener('click', function () { document.querySelectorAll('.rpt-option').forEach(function (o) { o.classList.remove('selected'); }); opt.classList.add('selected'); document.getElementById('rptRangeCustom').style.display = opt.dataset.val === 'custom' ? 'flex' : 'none'; }); });
-document.getElementById('rptRangeCancel').addEventListener('click', closeReportRangeModal);
-document.getElementById('rptRangeCancel2').addEventListener('click', closeReportRangeModal);
-document.getElementById('rptRangeConfirm').addEventListener('click', function () {
-    var m = document.getElementById('reportRangeModal'), mode = m.dataset.mode, op = document.querySelector('.rpt-option.selected').dataset.val, range = getReportRange(op); if (!range) return; closeReportRangeModal();
-    var res = buildReport(range); if (!res) { showToast("该范围内暂无打卡记录", true); return; }
-    if (mode === 'export') { var csv = res.rows.map(function (r2) { return r2.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(','); }).join('\r\n'), fn = '工时报表_' + range.label + '.csv'; downloadFile(fn, '\uFEFF' + csv, 'text/csv;charset=utf-8'); showToast("📤 报表已开始下载"); }
-    else { if (navigator.share) navigator.share({ title: '工时报表 ' + range.label, text: res.text }).then(function () { showToast("✅ 分享成功"); }).catch(function (e) { if (e.name !== 'AbortError') fallbackCopyText(res.text); }); else fallbackCopyText(res.text); }
-});
 document.getElementById('copyFallbackClose').addEventListener('click', function () { document.getElementById('copyFallbackModal').classList.remove('show'); });
 document.getElementById('copyFallbackClose2').addEventListener('click', function () { document.getElementById('copyFallbackModal').classList.remove('show'); });
 document.getElementById('copyFallbackRetry').addEventListener('click', function () { var txt = document.getElementById('copyFallbackText').value; if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(function () { showToast("📋 已复制到剪贴板"); }).catch(function () { showToast("❌ 复制失败，请手动长按复制", true); }); else showToast("❌ 复制失败，请手动长按复制", true); });
+/* 自定义班别设置弹窗：保存/取消/重置/遮罩关闭 */
 document.getElementById('shiftSettingsCancel').addEventListener('click', closeShiftSettings);
 document.getElementById('shiftSettingsClose').addEventListener('click', closeShiftSettings);
 document.getElementById('shiftSettingsConfirm').addEventListener('click', applyShiftSettings);
 document.getElementById('shiftSettingsReset').addEventListener('click', resetShiftSettings);
 document.getElementById('shiftSettingsModal').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeShiftSettings(); });
 
-/* 调试桥接：将关键函数/状态挂到 window，便于排查与单元测试；生产环境无副作用 */
-window.renderCalendar = renderCalendar;
-window.getLocalDateStr = getLocalDateStr;
-window.renderWeekView = renderWeekView;
-window.renderHistoryStats = renderHistoryStats;
-window.renderHistoryList = renderHistoryList;
-window.updateStats = updateStats;
-window.drawChart = drawChart;
-window.getMonthStats = getMonthStats;
-window.getWeekStats = getWeekStats;
-window.getStatus = getCurrentStatus;
-window.getSelectedDate = function () { return selectedDate; };
+/* 调试桥接：暴露关键函数/数据，生产环境无副作用 */
+try { window.__app = { getMonthStats: getMonthStats, getWeekStats: getWeekStats, renderHistoryStats: renderHistoryStats, getDuration: getDuration, getLocalDateStr: getLocalDateStr, allData: allData, get selectedDate(){ return selectedDate; }, setSelectedDate: function(d){ selectedDate = d; currentMonth = { year: d.getFullYear(), month: d.getMonth() }; _monthCache.key = ''; }, invalidateMonthCache: invalidateMonthCache, initTabbar: initTabbar, updateStats: updateStats, drawChart: drawChart }; } catch (e) {}
 
 }); // end DOMContentLoaded
