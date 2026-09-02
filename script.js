@@ -824,6 +824,13 @@ function syncChartWithCalView() {
 /* file:// 或离线环境下的兜底更新日志（正常情况以 changelog.json 为准） */
 const FALLBACK_CHANGELOG = [
     {
+        version: '2.1.1', date: '2026-09-02', tag: '修复', items: [
+            '修复「下载备份文件」提示已开始下载、实际没有文件：iOS/PWA/内置浏览器不支持 <a download>，原逻辑却无条件报成功',
+            '改为下载前探测环境能力，不可靠时直接弹出可复制的备份数据并说明原因，不再谎报成功',
+            '修复 Service Worker 可能拦截 blob 下载请求；修复 iOS 上图表分享被拒绝（改同步生成图片）'
+        ]
+    },
+    {
         version: '2.1.0', date: '2026-09-02', tag: '优化', items: [
             'script.js 全面重构：单一数据源 + 统一渲染调度，代码量减少约 35%',
             '修复：点击日历会产生「空打卡记录」，导致统计天数与日均被稀释',
@@ -1156,19 +1163,53 @@ function promptTargetHours() {
 /* ============================================================
  * 16. 备份 / 导入 / 清空
  * ========================================================== */
-/** 触发下载（移动端 / PWA / Safari 兜底） */
+/* ---- 下载能力探测 ---------------------------------------------------------
+ * <a download> 在以下环境「不报错但也不下载」，是「提示成功却没文件」的根源：
+ *   · iOS Safari（含 iPadOS）
+ *   · iOS 桌面 PWA（display: standalone）
+ *   · 微信 / 部分 App 内置 WebView
+ * 因此这里先探测环境，不可靠时不走 <a download>，直接给「可复制」的兜底，确保数据一定拿得到。
+ * ------------------------------------------------------------------------- */
+const dlEnv = (function () {
+    let isIOS = false, isStandalone = false, isInApp = false, supportsAttr = false;
+    try {
+        const ua = navigator.userAgent || '';
+        const isIPadOS = navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1;
+        isIOS = /iPad|iPhone|iPod/.test(ua) || isIPadOS;
+        isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+            window.navigator.standalone === true;
+        isInApp = /MicroMessenger|Weibo|QQ\/|Alipay|baiduboxapp|DingTalk/i.test(ua);
+        supportsAttr = 'download' in document.createElement('a');
+    } catch (e) { supportsAttr = false; }
+    return {
+        isIOS: isIOS, isStandalone: isStandalone, isInApp: isInApp, supportsAttr: supportsAttr,
+        /* 只有「原生支持 download 属性」且「不在 iOS / 内置 WebView」时才认为可靠 */
+        reliable: supportsAttr && !isIOS && !isInApp
+    };
+})();
+
+/**
+ * 触发下载。
+ * @returns {'ok'|'unsupported'|'fail'} —— 注意：不再无条件返回 true
+ */
 function triggerDownload(filename, blob) {
+    if (!dlEnv.reliable) return 'unsupported';
     try {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url; a.download = filename; a.rel = 'noopener';
+        a.style.display = 'none';
         document.body.appendChild(a);
-        let clicked = true;
-        try { a.click(); } catch (e) { clicked = false; }
-        if (!clicked) window.open(url, '_blank', 'noopener');
-        setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 60000);
-        return true;
-    } catch (e) { return false; }
+        a.click();
+        /* 下载启动后即可回收；延迟留足启动时间，并加保护避免重复移除报错 */
+        setTimeout(() => {
+            try { document.body.removeChild(a); } catch (e) {}
+            try { URL.revokeObjectURL(url); } catch (e) {}
+        }, 30000);
+        return 'ok';
+    } catch (e) {
+        return 'fail';
+    }
 }
 const buildBackupJSON = () => JSON.stringify(state.data);
 function buildBackupFileName() {
@@ -1176,26 +1217,61 @@ function buildBackupFileName() {
     return '工时记录备份_' + t.getFullYear() + pad2(t.getMonth() + 1) + pad2(t.getDate()) +
         '_' + pad2(t.getHours()) + pad2(t.getMinutes()) + '.json';
 }
-function downloadBackup() {
-    const blob = new Blob([buildBackupJSON()], { type: 'application/json' });
-    const ok = triggerDownload(buildBackupFileName(), blob);
+/** 兜底弹窗：把备份数据摆出来供手动复制（tip 为空则不显示提示条） */
+function showCopyFallback(text, tip) {
     closeSettings();
-    store.write(KEY.backupAt, String(Date.now()));
-    showToast(ok ? '✅ 备份文件已开始下载' : '❌ 下载失败，请重试', !ok);
+    const ta = document.getElementById('copyFallbackText');
+    if (!ta) { showToast('❌ 无法展示备份数据，请刷新后重试', true); return; }
+    ta.value = text;
+    let el = document.getElementById('copyFallbackTip');
+    if (!el && ta.parentNode) {
+        el = document.createElement('div');
+        el.id = 'copyFallbackTip';
+        ta.parentNode.insertBefore(el, ta);
+    }
+    if (el) {
+        if (tip) {
+            el.textContent = tip;
+            el.style.cssText = 'font-size:12px;line-height:1.6;color:#8a6d00;background:#fff8e1;' +
+                'border:1px solid #ffe082;border-radius:8px;padding:9px 11px;margin:0 0 10px;';
+            el.style.display = 'block';
+        } else {
+            el.style.display = 'none';
+        }
+    }
+    openModal('copyFallbackModal');
+    /* 弹窗后自动选中，方便直接长按/全选复制 */
+    try { ta.focus(); ta.select(); } catch (e) {}
+}
+function downloadBackup() {
+    const text = buildBackupJSON();
+    const result = triggerDownload(buildBackupFileName(), new Blob([text], { type: 'application/json' }));
+    if (result === 'ok') {
+        closeSettings();
+        store.write(KEY.backupAt, String(Date.now()));
+        showToast('✅ 备份文件已开始下载');
+        return;
+    }
+    if (result === 'fail') {
+        showCopyFallback(text, '下载失败，请复制下方数据自行保存。');
+        showToast('❌ 下载失败，已转为手动复制', true);
+        return;
+    }
+    /* 环境不支持直接下载：不谎报成功，直接给可复制的数据 */
+    const why = dlEnv.isInApp ? '当前在 App 内置浏览器中' : '当前环境（iOS/PWA）不支持直接下载文件';
+    showCopyFallback(text, why + '，请全选复制下方数据，粘贴到备忘录或文件中保存。' +
+        '也可在 Safari / Chrome 中打开本页后重试下载。');
+    showToast('⚠️ 无法直接下载，已生成备份数据', true);
 }
 function copyData() {
     const text = buildBackupJSON();
-    const fallback = () => {
-        closeSettings();
-        const ta = document.getElementById('copyFallbackText');
-        if (ta) ta.value = text;
-        openModal('copyFallbackModal');
-    };
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text)
             .then(() => { closeSettings(); showToast('📋 备份数据已复制到剪贴板'); })
-            .catch(fallback);
-    } else fallback();
+            .catch(() => showCopyFallback(text, '自动复制被浏览器拦截，请手动全选复制。'));
+    } else {
+        showCopyFallback(text, '当前环境不支持自动复制，请手动全选复制。');
+    }
 }
 /** 导入：清洗 → 二次确认 → 覆盖 → 全量刷新 */
 function applyImportData(obj) {
@@ -1274,36 +1350,66 @@ function applyCustomRange() {
 function chartExportName() {
     return '工时趋势图_' + chartRangeLabel().replace(/[^\w一-龥]+/g, '_') + '.png';
 }
-function exportChartPNG() {
+/**
+ * 生成图表 PNG blob：优先走同步的 toDataURL，以保持用户手势上下文
+ * （iOS 上 navigator.share 要求 transient activation，异步 toBlob 回调里调用会被拒绝）。
+ */
+function buildChartBlob(cb) {
     const canvas = document.createElement('canvas');
     canvas.width = EXPORT_W; canvas.height = EXPORT_H;
-    if (!paintChartToCanvas(canvas)) { showToast('该范围暂无打卡记录可导出', true); return; }
-    canvas.toBlob((blob) => {
+    if (!paintChartToCanvas(canvas)) { cb(null, 'empty'); return; }
+    try {
+        const dataUrl = canvas.toDataURL('image/png');
+        const bin = atob(dataUrl.split(',')[1] || '');
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        cb(new Blob([arr], { type: 'image/png' }), null);
+    } catch (e) {
+        if (!canvas.toBlob) { cb(null, 'unsupported'); return; }
+        canvas.toBlob((b) => cb(b, b ? null : 'fail'), 'image/png');
+    }
+}
+/** 降级：可下载则下载，否则开新窗预览供长按保存 */
+function degradeImageSave(file, blob) {
+    if (dlEnv.reliable) {
+        if (triggerDownload(file.name, blob) === 'ok') { showToast('🖼️ 已转为下载'); return; }
+        showToast('❌ 分享与下载均不可用', true);
+        return;
+    }
+    try {
+        const url = URL.createObjectURL(blob);
+        const win = window.open(url, '_blank');
+        if (win) showToast('已在新窗口打开，请长按图片保存', true);
+        else showToast('❌ 无法打开预览，请更换浏览器重试', true);
+        setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) {} }, 60000);
+    } catch (e) {
+        showToast('❌ 无法打开预览，请更换浏览器重试', true);
+    }
+}
+function shareFile(file, blob) {
+    const canShare = navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }));
+    if (!canShare) { degradeImageSave(file, blob); return; }
+    navigator.share({ title: file.name, files: [file] })
+        .then(() => showToast('✅ 分享成功'))
+        .catch((e) => { if (!e || e.name !== 'AbortError') degradeImageSave(file, blob); });
+}
+function exportChartPNG() {
+    buildChartBlob((blob, err) => {
+        if (err === 'empty') { showToast('该范围暂无打卡记录可导出', true); return; }
         if (!blob) { showToast('❌ 导出失败，请重试', true); return; }
-        triggerDownload(chartExportName(), blob);
-        showToast('🖼️ 图表图片已开始下载');
-    }, 'image/png');
+        const name = chartExportName();
+        const r = triggerDownload(name, blob);
+        if (r === 'ok') { showToast('🖼️ 图表图片已开始下载'); return; }
+        /* 不可靠环境下不假装成功：转系统分享（iOS 可存入「文件」/「照片」） */
+        shareFile(new File([blob], name, { type: 'image/png' }), blob);
+    });
 }
 function shareChartImage() {
-    const canvas = document.createElement('canvas');
-    canvas.width = EXPORT_W; canvas.height = EXPORT_H;
-    if (!paintChartToCanvas(canvas)) { showToast('该范围暂无打卡记录可分享', true); return; }
-    canvas.toBlob((blob) => {
-        if (!blob) { showToast('❌ 分享失败，已转为下载', true); exportChartPNG(); return; }
-        const file = new File([blob], chartExportName(), { type: 'image/png' });
-        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-            navigator.share({ title: '工时趋势图', files: [file] })
-                .then(() => showToast('✅ 分享成功'))
-                .catch((e) => {
-                    if (e && e.name === 'AbortError') return;
-                    triggerDownload(file.name, blob);
-                    showToast('🖼️ 已转为下载');
-                });
-        } else {
-            triggerDownload(file.name, blob);
-            showToast('🖼️ 分享不可用，已转为下载');
-        }
-    }, 'image/png');
+    buildChartBlob((blob, err) => {
+        if (err === 'empty') { showToast('该范围暂无打卡记录可分享', true); return; }
+        if (!blob) { showToast('❌ 生成图片失败，请重试', true); return; }
+        shareFile(new File([blob], chartExportName(), { type: 'image/png' }), blob);
+    });
 }
 
 /* ============================================================
