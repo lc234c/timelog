@@ -190,6 +190,14 @@
             </div>
             <div class="settings-group">
                 <div class="settings-group-title">数据管理</div>
+                <div class="data-status">
+                    <div class="ds-row" id="backupStatus">暂无打卡记录</div>
+                    <div class="ds-row ds-mute" id="storageMode">数据存储：本地数据库</div>
+                    <div class="ds-row ds-mute" id="fileSyncTip" style="display:none;"></div>
+                </div>
+                <ul class="settings-list">
+                    <li id="fileSyncItem" style="display:none;">🔗 本地文件自动同步<span class="settings-val" id="fileSyncVal">未开启</span></li>
+                </ul>
                 <ul class="settings-list">
                     <li id="downloadBackupItem">💾 下载备份文件</li>
                     <li id="copyDataItem">📋 复制备份数据</li>

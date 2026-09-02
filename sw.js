@@ -53,7 +53,16 @@ self.addEventListener('activate', function (event) {
 self.addEventListener('fetch', function (event) {
   var req = event.request;
   if (req.method !== 'GET') return;
-  var url = new URL(req.url);
+
+  var url;
+  try {
+    url = new URL(req.url);
+  } catch (e) {
+    return;
+  }
+  // 只接管同源 http(s) 请求：blob: / data: / about: 等一律透传，
+  // 否则 Service Worker 可能拦截下载用的 blob URL，导致「点了下载却没反应」。
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
   if (url.origin !== self.location.origin) return;
   if (url.search) return; // 带参数的请求透传，不缓存
 
@@ -80,7 +89,8 @@ self.addEventListener('fetch', function (event) {
         }
         return response;
       }).catch(function () {
-        return caches.match('./index.html');
+        // 非导航请求失败时不再兜底成 HTML，避免下载/图片拿到错误内容
+        return Response.error();
       });
     })
   );

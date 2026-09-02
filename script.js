@@ -10,13 +10,20 @@
  * 1. 常量
  * ========================================================== */
 const KEY = {
-    data: 'attendanceData',
+    data: 'attendanceData',          // 打卡记录（IndexedDB 为主，localStorage 为同步镜像）
     shifts: 'shiftSchedules',
     shiftType: 'defaultShiftType',
     calExpanded: 'calendarDefaultExpanded',
     target: 'chartTargetHours',
-    backupAt: 'lastBackupRemind'
+    backupAt: 'lastBackupRemind',    // 上次备份时间戳
+    backupCount: 'lastBackupCount',  // 上次备份时的记录天数，用于按增量提醒
+    fileSync: 'fileSyncName'         // 已绑定备份文件的文件名（提示用，句柄存 IndexedDB）
 };
+
+/* IndexedDB：days 存打卡记录，handles 存备份文件的句柄 */
+const IDB_NAME = 'worktime-db', IDB_VER = 2, IDB_STORE = 'days', IDB_HANDLES = 'handles';
+/* 累计新增多少天记录就提醒备份一次 */
+const BACKUP_THRESHOLD = 10;
 
 const PUNCH_KEYS = ['s1', 'e1', 's2', 'e2'];          // 打卡槽位顺序
 const RE_HM = /^([01]\d|2[0-3]):[0-5]\d$/;            // HH:MM
@@ -118,7 +125,10 @@ function durationHours(a, b) {
 const inPeriods = (periods, hm) => periods.some((p) => hm >= p.start && hm <= p.end);
 
 /* ============================================================
- * 3. 存储层（统一读写 + 可用性探测 + 失败自动降级）
+ * 3. 存储层
+ *    store —— localStorage：偏好设置等小数据（同步读写）
+ *    db    —— IndexedDB：打卡记录主存储（异步、大容量，按日期分条存储）
+ *             不可用时自动降级为 localStorage，再不行降级为纯内存
  * ========================================================== */
 const store = (function () {
     let ok = false;
@@ -142,11 +152,151 @@ const store = (function () {
     };
 })();
 
+/* ---- IndexedDB 打卡记录仓库（按日期一条记录，读写粒度小） ---- */
+const db = (function () {
+    let mode = 'memory';        // idb | local | memory
+    let conn = null;
+
+    function openConn() {
+        return new Promise((resolve, reject) => {
+            if (typeof indexedDB === 'undefined' || !indexedDB) { reject(new Error('no-indexeddb')); return; }
+            let req;
+            try { req = indexedDB.open(IDB_NAME, IDB_VER); } catch (e) { reject(e); return; }
+            req.onupgradeneeded = () => {
+                const d = req.result;
+                if (!d.objectStoreNames.contains(IDB_STORE)) d.createObjectStore(IDB_STORE);
+                if (!d.objectStoreNames.contains(IDB_HANDLES)) d.createObjectStore(IDB_HANDLES);
+            };
+            req.onsuccess = () => { conn = req.result; resolve(conn); };
+            req.onerror = () => reject(req.error || new Error('idb-open-failed'));
+            req.onblocked = () => reject(new Error('idb-blocked'));
+        });
+    }
+
+    /* 游标遍历取值，保留日期键 */
+    function idbReadAll() {
+        return new Promise((resolve, reject) => {
+            const out = {};
+            let t;
+            try { t = conn.transaction(IDB_STORE, 'readonly'); } catch (e) { reject(e); return; }
+            const req = t.objectStore(IDB_STORE).openCursor();
+            req.onsuccess = () => {
+                const cur = req.result;
+                if (cur) { out[cur.key] = cur.value; cur.continue(); } else resolve(out);
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+    function idbWrite(puts, dels) {
+        return new Promise((resolve, reject) => {
+            let t;
+            try { t = conn.transaction(IDB_STORE, 'readwrite'); } catch (e) { reject(e); return; }
+            const os = t.objectStore(IDB_STORE);
+            Object.keys(puts).forEach((k) => os.put(puts[k], k));
+            (dels || []).forEach((k) => os.delete(k));
+            t.oncomplete = () => resolve(true);
+            t.onerror = () => reject(t.error);
+            t.onabort = () => reject(t.error || new Error('abort'));
+        });
+    }
+    function idbReplaceAll(data) {
+        return new Promise((resolve, reject) => {
+            let t;
+            try { t = conn.transaction(IDB_STORE, 'readwrite'); } catch (e) { reject(e); return; }
+            const os = t.objectStore(IDB_STORE);
+            os.clear();
+            Object.keys(data).forEach((k) => os.put(data[k], k));
+            t.oncomplete = () => resolve(true);
+            t.onerror = () => reject(t.error);
+            t.onabort = () => reject(t.error || new Error('abort'));
+        });
+    }
+    /* 备份文件句柄：FileSystemFileHandle 可结构化克隆，直接存入 IndexedDB。
+       注意：put() 在句柄不可克隆时会「同步」抛出 DataCloneError，必须一并捕获。 */
+    function idbSetHandle(h) {
+        return new Promise((resolve, reject) => {
+            let t;
+            try { t = conn.transaction(IDB_HANDLES, 'readwrite'); } catch (e) { reject(e); return; }
+            let req;
+            try { req = t.objectStore(IDB_HANDLES).put(h, 'backup'); }
+            catch (e) { reject(e); return; }
+            t.oncomplete = () => resolve(true);
+            t.onerror = () => reject(t.error || new Error('put-failed'));
+            t.onabort = () => reject(t.error || new Error('abort'));
+        });
+    }
+    function idbGetHandle() {
+        return new Promise((resolve, reject) => {
+            let t;
+            try { t = conn.transaction(IDB_HANDLES, 'readonly'); } catch (e) { reject(e); return; }
+            const req = t.objectStore(IDB_HANDLES).get('backup');
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => reject(req.error);
+        });
+    }
+    function idbDropHandle() {
+        return new Promise((resolve) => {
+            let t;
+            try { t = conn.transaction(IDB_HANDLES, 'readwrite'); } catch (e) { resolve(false); return; }
+            t.objectStore(IDB_HANDLES).delete('backup');
+            t.oncomplete = () => resolve(true);
+            t.onerror = () => resolve(false);
+        });
+    }
+
+    /* ---- localStorage 降级实现：整包读写 ---- */
+    function localReadAll() { return store.readJSON(KEY.data, {}) || {}; }
+    function localMerge(puts, dels) {
+        const all = localReadAll();
+        Object.keys(puts).forEach((k) => { all[k] = puts[k]; });
+        (dels || []).forEach((k) => { delete all[k]; });
+        return store.writeJSON(KEY.data, all);
+    }
+    function localReplaceAll(data) { return store.writeJSON(KEY.data, data); }
+
+    const ready = openConn().then(
+        () => { mode = 'idb'; return mode; },
+        () => { mode = store.available ? 'local' : 'memory'; return mode; }
+    );
+
+    return {
+        ready: ready,
+        get mode() { return mode; },
+        /** 当前存储方式的中文名，用于界面提示 */
+        get modeLabel() {
+            return mode === 'idb' ? '本地数据库（IndexedDB）'
+                : mode === 'local' ? '本地缓存（localStorage，容量较小）'
+                : '内存（不保存，刷新即丢失）';
+        },
+        loadAll() {
+            if (mode === 'idb') return idbReadAll();
+            if (mode === 'local') return Promise.resolve(localReadAll());
+            return Promise.resolve({});
+        },
+        saveMany(puts, dels) {
+            if (mode === 'idb') return idbWrite(puts, dels);
+            if (mode === 'local') return Promise.resolve(localMerge(puts, dels));
+            return Promise.resolve(false);
+        },
+        replaceAll(data) {
+            if (mode === 'idb') return idbReplaceAll(data);
+            if (mode === 'local') return Promise.resolve(localReplaceAll(data));
+            return Promise.resolve(false);
+        },
+        /* 备份文件句柄；IndexedDB 不可用时无法持久化句柄，只能每次手动选文件 */
+        setHandle(h) { return mode === 'idb' ? idbSetHandle(h) : Promise.resolve(false); },
+        getHandle() { return mode === 'idb' ? idbGetHandle() : Promise.resolve(null); },
+        dropHandle() { return mode === 'idb' ? idbDropHandle() : Promise.resolve(false); }
+    };
+})();
+
 /* ============================================================
  * 4. 状态
  * ========================================================== */
 const state = {
-    data: loadData(),                 // { 'YYYY-MM-DD': { shiftType, status:{s1,e1,s2,e2} } }
+    data: loadMirror(),               // { 'YYYY-MM-DD': { shiftType, status:{s1,e1,s2,e2} } }
+                                      // 启动时先用 localStorage 镜像同步填充，避免首屏空白；
+                                      // 随后由 hydrate() 用 IndexedDB 的权威数据校正
     selected: today(),                // 当前选中日期（始终为当天 00:00）
     view: { y: 0, m: 0 },             // 月视图当前年月
     shiftType: 'day',                 // 当前生效班别
@@ -168,10 +318,9 @@ const shifts = loadShiftSchedules();
 /* ============================================================
  * 5. 数据层
  * ========================================================== */
-/** 读取并清洗持久化数据：剔除非法日期键、非法时间、空壳记录 */
-function loadData() {
-    const raw = store.readJSON(KEY.data, null);
-    return normalizeData(raw);
+/** 读取 localStorage 镜像（同步，仅用于首屏快速渲染） */
+function loadMirror() {
+    return normalizeData(store.readJSON(KEY.data, null));
 }
 /** 数据清洗：返回一份干净副本（同时用于导入） */
 function normalizeData(raw) {
@@ -196,16 +345,87 @@ function normalizeData(raw) {
 }
 function normalizeShiftType(t) { return SHIFT_TYPES.indexOf(t) >= 0 ? t : 'day'; }
 
+/* ---- 持久化调度 ----
+ * 变更只记录「脏键」，合并后批量写入：单次打卡只写 1 条记录，而不是全量重写。
+ * 每次变更同时同步刷新 localStorage 镜像，作为 IndexedDB 不可用时的兜底。
+ */
+let dirtyKeys = null;      // Set<日期键>；null 表示暂无增量
+let dirtyAll = false;      // true 表示整库替换（导入 / 清空）
+let flushTimer = 0;
+const FLUSH_DELAY = 200;
+
+function markDirty(ds) { if (!dirtyKeys) dirtyKeys = new Set(); dirtyKeys.add(ds); }
+function markAllDirty() { dirtyAll = true; }
+
+function writeMirror(data) {
+    if (!store.available) return;
+    try { localStorage.setItem(KEY.data, JSON.stringify(data)); } catch (e) {}
+}
+
 function saveData() {
     state.version++;
-    store.writeJSON(KEY.data, state.data);
+    writeMirror(state.data);
+    scheduleFlush();
+    if (syncHook) { try { syncHook(); } catch (e) {} }
+    /* 备份状态会随记录数变化，纳入渲染调度统一刷新 */
+    if (typeof invalidate === 'function') invalidate('dataStatus');
 }
+/* 数据变更后的外部钩子，由文件同步模块注册（避免跨模块的 TDZ 问题） */
+let syncHook = null;
+function setSyncHook(fn) { syncHook = fn; }
+function scheduleFlush() {
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => { flushTimer = 0; flushData(); }, FLUSH_DELAY);
+}
+/** 把累积的变更写入 IndexedDB；返回 Promise<boolean> */
+function flushData() {
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = 0; }
+    if (dirtyAll) {
+        dirtyAll = false;
+        dirtyKeys = null;
+        return db.replaceAll(state.data).catch(() => false);
+    }
+    if (!dirtyKeys || !dirtyKeys.size) return Promise.resolve(true);
+    const puts = {}, dels = [];
+    dirtyKeys.forEach((ds) => {
+        if (state.data[ds]) puts[ds] = state.data[ds];
+        else dels.push(ds);
+    });
+    dirtyKeys = null;
+    return db.saveMany(puts, dels).catch(() => false);
+}
+
+/** 从 IndexedDB 载入权威数据并校正内存状态。
+ *  · IndexedDB 有数据 → 以它为准（localStorage 被清理时可据此恢复）
+ *  · IndexedDB 为空而镜像有数据 → 首次升级，把镜像迁入库
+ *  @returns Promise<{count:number, restored:number}> */
+function hydrate() {
+    return db.ready
+        .then(() => db.loadAll())
+        .then((raw) => {
+            const remote = normalizeData(raw);
+            const remoteCount = Object.keys(remote).length;
+            const mirrorCount = Object.keys(state.data).length;
+            if (remoteCount > 0) {
+                state.data = remote;
+                state.version++;
+                if (remoteCount !== mirrorCount) writeMirror(state.data);
+            } else if (mirrorCount > 0) {
+                db.replaceAll(state.data).catch(() => {});
+            }
+            return { count: remoteCount || mirrorCount, restored: Math.max(0, remoteCount - mirrorCount) };
+        })
+        .catch(() => ({ count: Object.keys(state.data).length, restored: 0 }));
+}
+
 /** 只读取某天记录（不存在返回 null，不创建） */
 function getRecord(ds) {
     const r = state.data[ds];
     return r || null;
 }
-/** 取（或按需创建）某天记录 */
+/** 取（或按需创建）某天记录。
+ *  仅在写入路径调用（打卡 / 补卡），因此无条件标记脏键——
+ *  调用方紧接着会修改 status，必须确保变更被落盘。 */
 function ensureRecord(ds, shiftType) {
     let r = state.data[ds];
     if (!r) {
@@ -213,7 +433,28 @@ function ensureRecord(ds, shiftType) {
     } else if (!r.shiftType) {
         r.shiftType = normalizeShiftType(shiftType || state.shiftType);
     }
+    markDirty(ds);
     return r;
+}
+/** 删除某天记录（不存在则返回 false） */
+function removeRecord(ds) {
+    if (!state.data[ds]) return false;
+    delete state.data[ds];
+    markDirty(ds);
+    state.version++;
+    writeMirror(state.data);
+    scheduleFlush();
+    if (typeof invalidate === 'function') invalidate('dataStatus');
+    return true;
+}
+/** 整体替换全部数据（导入 / 清空） */
+function replaceAllData(next) {
+    state.data = next;
+    markAllDirty();
+    state.version++;
+    writeMirror(state.data);
+    scheduleFlush();
+    if (typeof invalidate === 'function') invalidate('dataStatus');
 }
 /** 当前选中日期的记录（只读；空则视为全空状态） */
 const currentRecord = () => getRecord(toDateKey(state.selected));
@@ -347,7 +588,9 @@ const RENDERERS = {
     stats: renderTodayStats,
     tabStats: renderTabStats,
     history: renderHistoryList,
-    chart: drawChart
+    chart: drawChart,
+    /* 设置页的备份状态 / 存储方式；元素可能不存在，refreshDataStatus 内部已做空值保护 */
+    dataStatus: () => { if (typeof refreshDataStatus === 'function') refreshDataStatus(); }
 };
 const pending = {};
 let rafId = 0;
@@ -363,7 +606,7 @@ function flushRender() {
         try { RENDERERS[name](); } catch (e) { console.error('[render:' + name + ']', e); }
     });
 }
-/** 数据变更后统一入口：保存 + 全量刷新 */
+/** 数据变更后统一入口：保存 + 全量刷新 + 触发本地文件同步（由 saveData 内部的钩子触发） */
 function commit() {
     saveData();
     invalidate('calendar', 'selected', 'stats', 'tabStats', 'history', 'chart');
@@ -824,6 +1067,13 @@ function syncChartWithCalView() {
 /* file:// 或离线环境下的兜底更新日志（正常情况以 changelog.json 为准） */
 const FALLBACK_CHANGELOG = [
     {
+        version: '2.2.0', date: '2026-09-02', tag: '新增', items: [
+            '新增本地数据库（IndexedDB）：容量大幅提升，按日分条存储；清理 localStorage 后自动恢复记录',
+            '新增本地文件自动同步：绑定文件后每次打卡自动写入，清缓存后可重新选文件找回（桌面版 Chrome/Edge）',
+            '设置页新增数据状态区，显示备份时间与存储方式；备份提醒改为按新增 10 天记录触发'
+        ]
+    },
+    {
         version: '2.1.1', date: '2026-09-02', tag: '修复', items: [
             '修复「下载备份文件」提示已开始下载、实际没有文件：iOS/PWA/内置浏览器不支持 <a download>，原逻辑却无条件报成功',
             '改为下载前探测环境能力，不可靠时直接弹出可复制的备份数据并说明原因，不再谎报成功',
@@ -959,7 +1209,7 @@ function changeShift() {
     store.write(KEY.shiftType, state.shiftType);
     /* 仅当该日已有打卡记录时才落盘班别，避免留下「空壳记录」污染备份与统计 */
     const rec = currentRecord();
-    if (rec) rec.shiftType = state.shiftType;
+    if (rec) { rec.shiftType = state.shiftType; markDirty(toDateKey(state.selected)); }
     saveData();
     invalidate('selected', 'stats', 'history');
 }
@@ -1008,9 +1258,10 @@ function deleteTodayTime(key) {
     if (!rec || !rec.status[key]) return;
     const d = state.selected;
     if (!confirm('确定删除「' + d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日」的这次打卡记录吗？')) return;
+    /* 该时段清空后若整日已无打卡，直接移除该日，避免留下空壳记录污染统计 */
     rec.status[key] = null;
-    if (punchCount(rec) === 0) delete state.data[ds];
-    commit();
+    if (punchCount(rec) === 0) removeRecord(ds);
+    else { markDirty(ds); commit(); }
     showToast('删除成功');
 }
 
@@ -1064,7 +1315,7 @@ function submitMakeup() {
  * ========================================================== */
 function openModal(id) { const m = document.getElementById(id); if (m) m.classList.add('show'); }
 function closeModal(id) { const m = document.getElementById(id); if (m) m.classList.remove('show'); }
-const openSettings = () => { refreshCalDefaultSwitch(); openModal('settingsModal'); };
+const openSettings = () => { refreshCalDefaultSwitch(); refreshDataStatus(); openModal('settingsModal'); };
 const closeSettings = () => closeModal('settingsModal');
 const closeAbout = () => closeModal('aboutModal');
 const closeMakeupModal = () => closeModal('makeupModal');
@@ -1161,7 +1412,198 @@ function promptTargetHours() {
 }
 
 /* ============================================================
- * 16. 备份 / 导入 / 清空
+ * 16. 本地文件自动落盘（File System Access API）
+ *   绑定一个本地 .json 文件后，每次打卡自动覆盖写入；
+ *   浏览器数据被清除后，重新打开页面点「连接」即可从该文件恢复。
+ *   仅 Chrome / Edge 等桌面浏览器支持；iOS / Safari / 手机端自动隐藏入口。
+ * ========================================================== */
+const fileSync = (function () {
+    const supported = typeof window !== 'undefined' &&
+        typeof window.showSaveFilePicker === 'function' &&
+        typeof window.showOpenFilePicker === 'function';
+
+    let handle = null;         // 已绑定的 FileSystemFileHandle
+    let status = 'off';        // off | linked | need-tap | error
+    let fileName = '';
+    let lastError = '';
+    let lastSyncAt = 0;
+    let timer = 0;
+
+    /** 句柄权限查询 / 申请；mode: 'read' | 'readwrite' */
+    async function permit(h, mode) {
+        if (!h || typeof h.queryPermission !== 'function') return false;
+        const opt = { mode: mode || 'readwrite' };
+        try {
+            if (await h.queryPermission(opt) === 'granted') return true;
+            return await h.requestPermission(opt) === 'granted';
+        } catch (e) { return false; }
+    }
+    function setStatus(s, err) {
+        status = s; lastError = err || '';
+        refreshDataStatus();
+    }
+    function suggestedName() { return store.read(KEY.fileSync) || buildBackupFileName(); }
+
+    /** 读取文件文本；文件被删除/移动时返回 null */
+    async function readHandle(h) {
+        try {
+            const f = await h.getFile();
+            fileName = f.name || fileName;
+            const txt = await f.text();
+            return { text: txt, name: f.name, mtime: f.lastModified || 0 };
+        } catch (e) { return null; }
+    }
+    /** 把当前数据写入已绑定文件 */
+    async function writeNow() {
+        if (!handle) return false;
+        if (!(await permit(handle, 'readwrite'))) {
+            setStatus('need-tap', '文件访问权限已失效');
+            return false;
+        }
+        let w = null;
+        try {
+            w = await handle.createWritable();
+            await w.write(JSON.stringify(state.data));
+            await w.close();
+            lastSyncAt = Date.now();
+            setStatus('linked');
+            return true;
+        } catch (e) {
+            try { if (w) await w.close(); } catch (e2) {}
+            setStatus('error', '写入文件失败（文件可能已被删除或移动）');
+            return false;
+        }
+    }
+    /** 防抖写入：连续打卡只写一次 */
+    function scheduleWrite() {
+        if (!supported || !handle) return;
+        clearTimeout(timer);
+        timer = setTimeout(() => { timer = 0; writeNow(); }, 800);
+    }
+
+    return {
+        get supported() { return supported; },
+        get status() { return status; },
+        get fileName() { return fileName; },
+        get lastError() { return lastError; },
+        get lastSyncAt() { return lastSyncAt; },
+        get linked() { return !!handle; },
+        /** 状态文案，用于设置页展示 */
+        get statusText() {
+            if (!supported) return '当前浏览器不支持（需 Chrome/Edge 桌面版）';
+            if (status === 'linked') return '已同步到 ' + fileName;
+            if (status === 'need-tap') return '需点击重新授权';
+            if (status === 'error') return lastError || '同步异常';
+            return '未开启';
+        },
+
+        /** 选择并绑定一个备份文件（必须在用户手势中调用） */
+        async link() {
+            if (!supported) { showToast('❌ 当前浏览器不支持本地文件同步', true); return false; }
+            let h;
+            try {
+                h = await window.showSaveFilePicker({
+                    suggestedName: suggestedName(),
+                    types: [{ description: '工时备份数据', accept: { 'application/json': ['.json'] } }],
+                    excludeAcceptAllOption: true
+                });
+            } catch (e) {
+                if (!e || e.name !== 'AbortError') showToast('❌ 未选择文件', true);
+                return false;
+            }
+            if (!(await permit(h, 'readwrite'))) {
+                showToast('❌ 未获得文件写入权限', true);
+                return false;
+            }
+            handle = h;
+            /* 目标文件已有内容时，先询问是否用它恢复（这是清缓存后的主要恢复入口） */
+            let restoredCount = 0;
+            const got = await readHandle(h);
+            if (got && got.text) {
+                let parsed = null;
+                try { parsed = JSON.parse(got.text); } catch (e) { parsed = null; }
+                const clean = normalizeData(parsed);
+                const n = Object.keys(clean).length;
+                if (n > 0 && confirm('文件「' + (got.name || '备份') + '」中已有 ' + n +
+                    ' 条打卡记录。\n\n【确定】用文件内容恢复当前数据\n【取消】用当前数据覆盖该文件')) {
+                    replaceAllData(clean);
+                    commit();
+                    restoredCount = n;
+                }
+            }
+            /* 句柄存入 IndexedDB 以便下次自动恢复；个别浏览器不支持克隆句柄，
+               失败时不能阻断本次同步——只是下次打开需要重新点一次授权。 */
+            let persisted = false;
+            try { persisted = await db.setHandle(h); } catch (e) { persisted = false; }
+            store.write(KEY.fileSync, fileName || '工时记录备份.json');
+            const ok = await writeNow();
+            setStatus(ok ? 'linked' : 'error', ok ? '' : '首次写入失败');
+
+            /* 恢复信息与开启结果合并为一条提示：
+               两条 toast 间隔极短，分开会立刻被覆盖，用户根本看不到恢复了几条。 */
+            if (!ok) {
+                showToast(restoredCount ? '❌ 已恢复 ' + restoredCount + ' 条，但写入文件失败' : '❌ 绑定成功但写入失败', true);
+            } else if (restoredCount) {
+                showToast('✅ 已从文件恢复 ' + restoredCount + ' 条记录，并开启自动同步');
+            } else {
+                showToast(persisted ? '✅ 已开启本地文件自动同步' : '✅ 已开启同步（本次有效，重开需重新选文件）');
+            }
+            return ok;
+        },
+
+        /** 尝试用已保存的句柄恢复（页面启动时静默调用；未被授权则进入 need-tap） */
+        async tryRestore() {
+            if (!supported) return false;
+            let h = null;
+            try { h = await db.getHandle(); } catch (e) { h = null; }
+            if (!h) return false;
+            handle = h;
+            /* 已授权则直接读取恢复，无需用户操作 */
+            if ((await permit(h, 'read')) !== true) {
+                setStatus('need-tap', '');
+                return false;
+            }
+            const got = await readHandle(h);
+            if (!got) { setStatus('error', '备份文件已失效，请重新绑定'); return false; }
+            let parsed = null;
+            try { parsed = JSON.parse(got.text); } catch (e) { parsed = null; }
+            const clean = normalizeData(parsed);
+            const n = Object.keys(clean).length;
+            const cur = Object.keys(state.data).length;
+            if (n > cur) {
+                replaceAllData(clean);
+                commit();
+                showToast('🔄 已从备份文件恢复 ' + n + ' 条记录');
+            }
+            setStatus('linked');
+            return true;
+        },
+
+        /** 用户点击「重新连接」：手动再选一次文件（清缓存后句柄丢失时的主要路径） */
+        async reconnect() {
+            if (!supported) { showToast('❌ 当前浏览器不支持本地文件同步', true); return false; }
+            if (handle && (await permit(handle, 'readwrite'))) return await writeNow();
+            return await this.link();
+        },
+
+        /** 解除绑定 */
+        async unlink() {
+            clearTimeout(timer); timer = 0;
+            handle = null; fileName = ''; lastSyncAt = 0;
+            try { await db.dropHandle(); } catch (e) {}
+            store.remove(KEY.fileSync);
+            setStatus('off');
+            showToast('已关闭本地文件同步');
+        },
+
+        scheduleWrite: scheduleWrite,
+        writeNow: writeNow
+    };
+})();
+setSyncHook(() => fileSync.scheduleWrite());
+
+/* ============================================================
+ * 17. 备份 / 导入 / 清空
  * ========================================================== */
 /* ---- 下载能力探测 ---------------------------------------------------------
  * <a download> 在以下环境「不报错但也不下载」，是「提示成功却没文件」的根源：
@@ -1243,12 +1685,18 @@ function showCopyFallback(text, tip) {
     /* 弹窗后自动选中，方便直接长按/全选复制 */
     try { ta.focus(); ta.select(); } catch (e) {}
 }
+/** 记录一次「备份完成」：写入时间戳与当时的记录天数，作为下次提醒的基准 */
+function markBackedUp() {
+    store.write(KEY.backupAt, String(Date.now()));
+    store.write(KEY.backupCount, String(Object.keys(state.data).length));
+    refreshDataStatus();
+}
 function downloadBackup() {
     const text = buildBackupJSON();
     const result = triggerDownload(buildBackupFileName(), new Blob([text], { type: 'application/json' }));
     if (result === 'ok') {
         closeSettings();
-        store.write(KEY.backupAt, String(Date.now()));
+        markBackedUp();
         showToast('✅ 备份文件已开始下载');
         return;
     }
@@ -1261,13 +1709,15 @@ function downloadBackup() {
     const why = dlEnv.isInApp ? '当前在 App 内置浏览器中' : '当前环境（iOS/PWA）不支持直接下载文件';
     showCopyFallback(text, why + '，请全选复制下方数据，粘贴到备忘录或文件中保存。' +
         '也可在 Safari / Chrome 中打开本页后重试下载。');
+    /* 数据已呈现给用户（可复制保存），同样计为一次备份 */
+    markBackedUp();
     showToast('⚠️ 无法直接下载，已生成备份数据', true);
 }
 function copyData() {
     const text = buildBackupJSON();
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text)
-            .then(() => { closeSettings(); showToast('📋 备份数据已复制到剪贴板'); })
+            .then(() => { closeSettings(); markBackedUp(); showToast('📋 备份数据已复制到剪贴板'); })
             .catch(() => showCopyFallback(text, '自动复制被浏览器拦截，请手动全选复制。'));
     } else {
         showCopyFallback(text, '当前环境不支持自动复制，请手动全选复制。');
@@ -1279,7 +1729,7 @@ function applyImportData(obj) {
     const count = Object.keys(clean).length;
     if (!count) { showToast('❌ 备份中没有可导入的打卡记录', true); return; }
     if (!confirm('导入将用该备份覆盖当前所有数据（共 ' + count + ' 条日期记录），确定继续吗？')) return;
-    state.data = clean;
+    replaceAllData(clean);
     state.selected = today();
     state.view.y = state.selected.getFullYear();
     state.view.m = state.selected.getMonth();
@@ -1322,15 +1772,16 @@ function openImportModal() {
 function clearAllData() {
     if (!confirm('【警告】将删除本地所有打卡记录！\n建议先备份。是否继续？')) return;
     if (!confirm('最后确认：真的清空所有数据吗？不可撤销！')) return;
-    state.data = {};
-    store.remove(KEY.data);
+    replaceAllData({});          // 整库替换：会同步清空 IndexedDB 与本地镜像
+    store.remove(KEY.backupCount);
+    store.remove(KEY.backupAt);
     commit();
     closeSettings();
     showToast('所有数据已清空');
 }
 
 /* ============================================================
- * 17. 图表交互
+ * 18. 图表交互
  * ========================================================== */
 function toggleChartType() {
     state.chart.type = state.chart.type === 'bar' ? 'line' : 'bar';
@@ -1413,7 +1864,7 @@ function shareChartImage() {
 }
 
 /* ============================================================
- * 18. 事件绑定
+ * 19. 事件绑定
  * ========================================================== */
 function on(target, ev, fn, opt) {
     if (!target) { console.warn('[bind] 元素不存在，跳过：' + ev); return; }
@@ -1484,6 +1935,22 @@ function bindEvents() {
      ['clearDataItem', clearAllData], ['openAboutItem', openAbout], ['targetSettingItem', promptTargetHours]
     ].forEach((p) => onId(p[0], 'click', p[1]));
 
+    /* 本地文件自动同步：未开启则绑定，已开启则「确定=立即同步 / 取消=关闭」 */
+    onId('fileSyncItem', 'click', () => {
+        if (!fileSync.supported) {
+            showToast('❌ 当前浏览器不支持本地文件同步，请用「下载备份文件」', true);
+            return;
+        }
+        if (!fileSync.linked) { fileSync.link(); return; }
+        if (fileSync.status !== 'linked') { fileSync.reconnect(); return; }
+        if (confirm('本地文件自动同步已开启\n文件：' + fileSync.fileName + '\n\n' +
+            '【确定】立即同步一次\n【取消】关闭自动同步')) {
+            fileSync.writeNow().then((ok) => showToast(ok ? '✅ 已同步到文件' : '❌ 同步失败', !ok));
+        } else {
+            fileSync.unlink();
+        }
+    });
+
     const calSwitch = document.getElementById('calDefaultSwitch');
     on(calSwitch, 'click', toggleCalDefault);
     on(calSwitch, 'keydown', (e) => {
@@ -1549,7 +2016,7 @@ function toggleTodayDetails(e) {
 }
 
 /* ============================================================
- * 19. Tab 切换
+ * 20. Tab 切换
  * ========================================================== */
 function initTabbar() {
     const items = $$('.tabbar-item');
@@ -1571,7 +2038,7 @@ function initTabbar() {
 }
 
 /* ============================================================
- * 20. 时钟
+ * 21. 时钟
  * ========================================================== */
 let clockTimer = 0;
 function tickClock() {
@@ -1579,22 +2046,74 @@ function tickClock() {
 }
 function startClock() { stopClock(); tickClock(); clockTimer = setInterval(tickClock, 1000); }
 function stopClock() { if (clockTimer) { clearInterval(clockTimer); clockTimer = 0; } }
-on(document, 'visibilitychange', () => (document.hidden ? stopClock() : startClock()));
+on(document, 'visibilitychange', () => {
+    if (document.hidden) { stopClock(); flushData(); } else startClock();
+});
+/* 关闭 / 切后台前强制落盘，避免防抖窗口内的变更丢失 */
+on(window, 'pagehide', flushData);
+on(window, 'beforeunload', flushData);
 
 /* ============================================================
- * 21. 自动备份提醒
+ * 22. 数据状态与备份提醒
  * ========================================================== */
+/** 备份状态：总记录天数、距上次备份后新增天数、上次备份时间 */
+function backupStatus() {
+    const total = Object.keys(state.data).length;
+    const base = parseInt(store.read(KEY.backupCount), 10);
+    const at = parseInt(store.read(KEY.backupAt), 10);
+    const backedUp = isFinite(base) && isFinite(at) && at > 0;
+    return {
+        total: total,
+        at: backedUp ? at : 0,
+        pending: backedUp ? Math.max(0, total - base) : total
+    };
+}
+/** 刷新设置页「数据管理」顶部的状态区 */
+function refreshDataStatus() {
+    const el = document.getElementById('backupStatus');
+    if (el) {
+        const s = backupStatus();
+        if (!s.total) el.textContent = '暂无打卡记录';
+        else if (!s.at) el.textContent = '⚠️ 尚未备份过 · 共 ' + s.total + ' 天记录，建议立即备份';
+        else {
+            const d = Math.max(0, Math.round((Date.now() - s.at) / DAY));
+            el.textContent = '上次备份：' + (d === 0 ? '今天' : d + ' 天前') +
+                (s.pending > 0 ? ' · 此后新增 ' + s.pending + ' 天' : ' · 已同步');
+        }
+        el.classList.toggle('warn', s.total > 0 && (!s.at || s.pending >= BACKUP_THRESHOLD));
+    }
+    const modeEl = document.getElementById('storageMode');
+    if (modeEl) modeEl.textContent = '数据存储：' + db.modeLabel;
+
+    const syncEl = document.getElementById('fileSyncVal');
+    const itemEl = document.getElementById('fileSyncItem');
+    if (itemEl) itemEl.style.display = fileSync.supported ? '' : 'none';
+    if (syncEl) {
+        const t = fileSync.statusText;
+        syncEl.textContent = t.length > 18 ? t.slice(0, 18) + '…' : t;
+        syncEl.className = 'settings-val' + (fileSync.status === 'error' ? ' ds-err' : '');
+    }
+    const tipEl = document.getElementById('fileSyncTip');
+    if (tipEl) {
+        tipEl.style.display = fileSync.supported ? '' : 'none';
+        tipEl.textContent = fileSync.supported
+            ? (fileSync.linked
+                ? '每次打卡自动写入该文件；清除浏览器缓存后点此重新连接即可恢复数据'
+                : '开启后每次打卡自动写入本地文件，清除浏览器缓存也能恢复数据')
+            : '当前浏览器不支持本地文件自动同步（需 Chrome/Edge 桌面版），请使用「下载备份文件」';
+    }
+}
+/** 按「新增记录天数」提醒备份，比按日历天数更贴合实际使用强度 */
 function autoBackupRemind() {
-    const days = Object.keys(state.data).length;
-    if (days <= 30 || !store.available) return;
-    const last = parseInt(store.read(KEY.backupAt), 10);
-    if (last && Date.now() - last < 7 * DAY) return;
-    store.write(KEY.backupAt, String(Date.now()));
-    if (confirm('您已有 ' + days + ' 天打卡记录，建议定期备份数据（设置→下载备份文件）。是否现在备份？')) downloadBackup();
+    const s = backupStatus();
+    if (s.pending < BACKUP_THRESHOLD) return;
+    if (!confirm('自上次备份后已新增 ' + s.pending + ' 天打卡记录（共 ' + s.total + ' 天）。\n' +
+        '浏览器数据可能因清理缓存而丢失，建议现在备份。是否立即备份？')) return;
+    downloadBackup();
 }
 
 /* ============================================================
- * 22. 初始化
+ * 23. 初始化
  * ========================================================== */
 function cacheEls() {
     Object.assign(els, {
@@ -1646,7 +2165,30 @@ function init() {
     initTabbar();
     invalidate('calendar', 'selected', 'stats', 'tabStats', 'history', 'chart');
     loadAboutData();
-    autoBackupRemind();
+    refreshDataStatus();
+
+    /* 数据恢复优先级：本地备份文件 > IndexedDB > localStorage 镜像
+       —— 浏览器缓存被清除后，仍能通过重新连接备份文件把数据找回来 */
+    hydrate().then(async (r) => {
+        let restored = r.restored;
+        try {
+            const fromFile = await fileSync.tryRestore();
+            if (fromFile && Object.keys(state.data).length > (r.count || 0)) {
+                restored = Object.keys(state.data).length;
+                showToast('🔄 已从备份文件恢复 ' + restored + ' 条记录');
+            }
+        } catch (e) { /* 文件恢复失败不影响主流程 */ }
+
+        refreshDataStatus();
+        invalidate('calendar', 'selected', 'stats', 'tabStats', 'history', 'chart');
+        /* 明确告知恢复来源，让用户知道数据是从本地数据库捞回来的 */
+        if (restored > 0) {
+            showToast(fileSync.linked
+                ? '🔄 已从备份文件恢复 ' + restored + ' 条记录'
+                : '🔄 已从本地数据库恢复 ' + restored + ' 条记录');
+        }
+        autoBackupRemind();
+    });
 }
 
 /* 调试桥接：暴露关键能力与只读数据，生产环境无副作用 */
@@ -1662,7 +2204,11 @@ try {
         durationHours: durationHours,
         toDateKey: toDateKey,
         refresh: invalidate,
-        drawChart: () => invalidate('chart')
+        drawChart: () => invalidate('chart'),
+        storageMode: () => db.mode,
+        storageLabel: () => db.modeLabel,
+        backupStatus: backupStatus,
+        flush: flushData
     };
 } catch (e) {}
 

@@ -367,3 +367,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica N
 .card-section-header h3{font-size:15px;font-weight:600;}
 .card-section-refresh{background:#eaf3ff;border:none;width:32px;height:32px;border-radius:50%;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .2s;}
 .card-section-refresh:active{transform:rotate(180deg) scale(.94);}
+
+/* ===== 数据管理状态区（备份状态 / 存储方式） ===== */
+.data-status{background:#f7f8fa;border:1px solid var(--border);border-radius:10px;padding:9px 12px;margin:0 6px 8px;}
+.data-status .ds-row{font-size:12px;line-height:1.7;color:#48484a;}
+.data-status .ds-row.warn{color:#b25000;font-weight:600;}
+.data-status .ds-mute{color:var(--text-secondary);font-size:11px;}
+/* 设置项右侧状态胶囊（错误态标红） */
+.settings-val.ds-err{background:#ffeceb;color:var(--danger);}
