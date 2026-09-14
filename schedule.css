@@ -1,0 +1,335 @@
+
+/* ============ 26. 排班周期规则 ============ */
+
+/* 设置入口右侧状态标签 */
+.settings-val.on {
+    color: var(--primary);
+    background: var(--tag-bg);
+    font-weight: 600;
+}
+
+/* shiftSelect 胶囊（承载「排班」角标） */
+.shift-select-capsule {
+    position: relative;
+    display: inline-block;
+}
+.shift-badge-schedule {
+    position: absolute;
+    top: -7px;
+    right: -7px;
+    background: #ff3b30;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 3px 5px;
+    border-radius: 8px;
+    z-index: 3;
+    box-shadow: 0 1px 3px rgba(255, 59, 48, .35);
+}
+
+/* 排休 / 排班 横幅 */
+.schedule-banner {
+    margin: 10px 14px 0;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    align-items: flex-start;
+    gap: 8px;
+}
+.schedule-banner-rest {
+    background: #f2f2f7;
+    color: #6c6c70;
+    border: 1px dashed #c7c7cc;
+}
+.schedule-banner-shift {
+    background: #eaf3ff;
+    color: #1c1c1e;
+    border: 1px solid #d6e6fb;
+}
+.sb-icon { font-size: 16px; flex: none; line-height: 1; }
+.sb-text { flex: 1; }
+.sb-text b { color: var(--primary); }
+
+/* ---- 排班配置弹窗 ---- */
+.modal-content-lg { max-width: 460px; }
+.schedule-enable-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 2px 14px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+}
+.schedule-enable-title { font-size: 14px; font-weight: 600; }
+.schedule-enable-desc { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
+
+.schedule-section { margin: 16px 0; }
+.schedule-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 10px;
+}
+
+/* ① 模板卡片 */
+.schedule-templates {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 230px;
+    overflow-y: auto;
+}
+.schedule-tpl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    transition: border-color .15s, background .15s;
+}
+.schedule-tpl:active { background: var(--tag-bg); }
+.schedule-tpl-left { flex: 1; min-width: 0; }
+.schedule-tpl-name { font-size: 13px; font-weight: 600; }
+.schedule-tpl-desc { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.schedule-tpl-cycle { display: flex; gap: 2px; flex: none; }
+.tpl-chip {
+    width: 20px; height: 20px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 4px; font-size: 11px;
+    background: var(--tag-bg);
+}
+.tpl-chip.tpl-day { background: #eaf3ff; }
+.tpl-chip.tpl-mid { background: #fff3e0; }
+.tpl-chip.tpl-night { background: #ede7f6; }
+.tpl-chip.tpl-rest { background: #f2f2f7; opacity: .7; }
+.tpl-chip.tpl-more { background: transparent; color: #8e8e93; }
+.schedule-tpl-load {
+    flex: none;
+    border: 1px solid var(--primary);
+    background: var(--primary);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: opacity .15s;
+}
+.schedule-tpl-load:active { opacity: .8; }
+
+/* ② 周期序列卡片 */
+.schedule-cycle-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 70px;
+    padding: 4px 2px;
+}
+.sch-card {
+    position: relative;
+    width: 64px;
+    padding: 10px 6px 8px;
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    text-align: center;
+    cursor: pointer;
+    transition: transform .12s, border-color .15s;
+    user-select: none;
+}
+.sch-card:active { transform: scale(.94); }
+.sch-card.sch-day   { border-color: #4a90e2; background: #f4f9ff; }
+.sch-card.sch-mid   { border-color: #ff9500; background: #fff8ec; }
+.sch-card.sch-night { border-color: #5e5ce6; background: #f4f2ff; }
+.sch-card.sch-rest  { border-color: #c7c7cc; background: #f7f7f9; }
+.sch-card-icon { font-size: 20px; line-height: 1; }
+.sch-card-name { font-size: 11px; font-weight: 600; margin-top: 4px; }
+.sch-card-day  { font-size: 10px; color: var(--text-secondary); margin-top: 1px; }
+.sch-card-del {
+    position: absolute;
+    top: -6px; right: -6px;
+    width: 18px; height: 18px;
+    display: flex; align-items: center; justify-content: center;
+    background: #ff3b30; color: #fff;
+    border: none; border-radius: 50%;
+    font-size: 9px; line-height: 1;
+    cursor: pointer; z-index: 2;
+    opacity: 0; transform: scale(.7);
+    transition: opacity .15s, transform .15s;
+}
+.sch-card:not(:only-child):hover .sch-card-del,
+.sch-card:active .sch-card-del { opacity: 1; transform: scale(1); }
+.sch-card-del:active { transform: scale(.85); }
+
+.schedule-cycle-add {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 10px;
+}
+.schedule-add-btn {
+    flex: none;
+    border: 1px dashed var(--primary);
+    background: transparent;
+    color: var(--primary);
+    font-size: 13px; font-weight: 600;
+    padding: 7px 14px;
+    border-radius: 9px; cursor: pointer;
+    transition: background .15s;
+}
+.schedule-add-btn:active { background: var(--tag-bg); }
+.schedule-cycle-tip {
+    font-size: 11px; color: var(--text-secondary); flex: 1; line-height: 1.4;
+}
+.schedule-cycle-tip b { color: var(--primary); font-size: 13px; }
+
+/* 基准日 */
+.schedule-base-date {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    font-size: 14px;
+    background: var(--input-bg);
+    color: var(--text);
+    outline: none;
+    box-sizing: border-box;
+}
+
+/* ④ 排班预览 */
+.schedule-preview {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 5px;
+}
+.schedule-preview-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: #a0a0a8;
+    font-size: 12px;
+    padding: 20px 0;
+}
+.sch-prev-cell {
+    padding: 8px 2px;
+    border-radius: 8px;
+    text-align: center;
+    background: var(--card);
+    border: 1px solid var(--border);
+}
+.sch-prev-cell.sch-day   { background: #f4f9ff; border-color: #cfe3ff; }
+.sch-prev-cell.sch-mid   { background: #fff8ec; border-color: #ffe4b8; }
+.sch-prev-cell.sch-night { background: #f4f2ff; border-color: #d6d0f5; }
+.sch-prev-cell.sch-rest  { background: #f7f7f9; border-color: #e2e2e6; opacity: .85; }
+.sch-prev-date { font-size: 11px; font-weight: 600; }
+.sch-prev-week { font-size: 9px; color: var(--text-secondary); }
+.sch-prev-icon { font-size: 18px; line-height: 1.2; margin: 2px 0; }
+.sch-prev-name { font-size: 9px; color: var(--text-secondary); }
+.sch-prev-out { opacity: .4; }
+.sch-prev-out .sch-prev-name { color: #c7c7cc; }
+
+.schedule-settings-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+}
+.schedule-settings-actions-right { display: flex; gap: 10px; }
+
+/* 日历排班颜色标记（背景色区分班次，不占用角标位置） */
+.cal-date.has-schedule.sch-day-day {
+    background: #eaf3ff;
+}
+.cal-date.has-schedule.sch-day-night {
+    background: #f0ecff;
+}
+.cal-date.has-schedule.sch-day-mid {
+    background: #fff8ec;
+}
+/* 休息日整格置灰 */
+.cal-date.sch-day-rest:not(.has-record):not(.selected):not(.today) {
+    color: #c7c7cc;
+}
+.cal-date.sch-day-rest::before {
+    content: '休';
+    position: absolute;
+    bottom: 3px;
+    font-size: 8px;
+    color: #a0a0a8;
+}
+
+/* 启用开关（复用 settings-switch，增强） */
+.settings-switch {
+    width: 44px; height: 26px;
+    border-radius: 13px;
+    background: #e5e5ea;
+    position: relative;
+    cursor: pointer;
+    transition: background .2s;
+    flex: none;
+}
+.settings-switch.on { background: var(--primary); }
+.settings-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2);
+    transition: left .2s;
+}
+.settings-switch.on::after { left: 20px; }
+
+/* 深色模式适配 */
+@media (prefers-color-scheme: dark) {
+    .schedule-banner-rest { background: #2c2c2e; color: #c7c7cc; border-color: #444; }
+    .schedule-banner-shift { background: #1c2a3a; color: #e5e5ea; border-color: #2a4a6a; }
+    .sch-card, .schedule-tpl, .sch-prev-cell { background: #2c2c2e; border-color: #444; }
+    .sch-card.sch-day { background: #1c2a3a; }
+    .sch-card.sch-mid { background: #3a2e1c; }
+    .sch-card.sch-night { background: #261f3a; }
+    .sch-card.sch-rest { background: #2c2c2e; }
+    .schedule-tpl-desc, .sch-prev-name, .sch-prev-week, .schedule-cycle-tip { color: #a0a0a8; }
+    .cal-date.has-schedule.sch-day-day { background: #1c2a3a; }
+    .cal-date.has-schedule.sch-day-night { background: #261f3a; }
+    .cal-date.has-schedule.sch-day-mid { background: #3a2e1c; }
+}
+
+/* ============ 排班生效范围 ============ */
+.schedule-range-mode {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.schedule-range-opt {
+    padding: 7px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: 9px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--card);
+    cursor: pointer;
+    transition: all .15s;
+    user-select: none;
+}
+.schedule-range-opt:active { transform: scale(.96); }
+.schedule-range-opt.selected {
+    border-color: var(--primary);
+    background: var(--tag-bg);
+    color: var(--primary);
+}
+.schedule-range-custom {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 10px;
+}
+.schedule-range-custom input {
+    flex: 1;
+    min-width: 0;
+}

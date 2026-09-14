@@ -11,6 +11,7 @@
 <link rel="icon" type="image/png" href="icon-192.png">
 <title>工时记录</title>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="schedule.css">
 </head>
 <body>
 <div class="app">
@@ -18,11 +19,9 @@
         <h1>📅 工时记录</h1>
         <div class="header-right">
             <span id="clock">--:--:--</span>
-            <button id="openSettingsBtn" title="设置">⚙️</button>
+            <button id="openSettingsBtn" title="设置" aria-label="设置">⚙️</button>
         </div>
     </div>
-
-    <div id="todayTag">今天</div>
 
     <!-- ===== 底部 Tab 容器 ===== -->
     <div class="tab-container">
@@ -33,9 +32,9 @@
         <div class="cal-header">
             <div class="cal-title" id="calTitle">2026年 08月</div>
             <div class="cal-navs">
-                <span id="prevMonth" title="上一月/周">&#60;</span>
-                <span id="nextMonth" title="下一月/周">&#62;</span>
-                <span id="collapseCal" class="collapse-btn" title="折叠/展开为周视图">▽</span>
+                <span id="prevMonth" title="上一月/周" role="button" aria-label="上一月或上一周">&#60;</span>
+                <span id="nextMonth" title="下一月/周" role="button" aria-label="下一月或下一周">&#62;</span>
+                <span id="collapseCal" class="collapse-btn" title="折叠/展开为周视图" role="button" aria-label="切换月视图或周视图">▽</span>
             </div>
         </div>
         <div class="cal-weekdays">
@@ -46,20 +45,44 @@
 
     <div class="sel-date-info">
         <div>
-            <div id="selDateText" style="font-weight:600;font-size:15px;">2026年8月24日</div>
+            <div id="selDateText" style="font-weight:600;font-size:14px;">2026年8月24日</div>
             <div id="shiftText" style="font-size:12px;color:#8e8e93;margin-top:2px;">排班时段: 08:00~12:00 (午休) 13:30~17:30</div>
         </div>
         <div class="shift-select-wrap">
-            <select id="shiftSelect">
-                <option value="day" selected>白班</option>
-                <option value="night">夜班</option>
-            </select>
+            <div id="shiftSelectCapsule" class="shift-select-capsule">
+                <select id="shiftSelect" aria-label="选择班别">
+                    <option value="day" selected>白班</option>
+                    <option value="night">夜班</option>
+                </select>
+            </div>
         </div>
     </div>
 
-    <div class="punch-section">
-        <button id="punchBtn">📍 <span id="btnText">上午上班</span></button>
+    <div class="punch-actions">
+        <button id="openLeaveBtn" type="button" class="punch-aux-btn punch-leave-btn" title="请假 / 调休登记">📝 请假</button>
+        <button id="openOvertimeBtn" type="button" class="punch-aux-btn punch-ot-btn" title="加班登记">➕ 加班</button>
+        <button id="batchOtBtn" type="button" class="punch-aux-btn punch-batch-btn" title="批量加班登记">📋 批量</button>
+        <button id="punchBtn" class="punch-main-btn">📍 <span id="btnText">上午上班</span></button>
     </div>
+    <!-- 批量加班操作栏（默认隐藏） -->
+    <div class="batch-ot-bar" id="batchOtBar" style="display:none;">
+        <div class="batch-ot-info"><span id="batchOtCount">0</span> 天已选</div>
+        <div class="batch-ot-controls">
+            <select id="batchOtType" class="batch-ot-select">
+                <option value="normal">G1 平时(1.5×)</option>
+                <option value="weekend">G2 周休(2×)</option>
+                <option value="holiday">G3 节假日(3×)</option>
+            </select>
+            <input type="number" id="batchOtHours" class="batch-ot-hours" min="0.5" step="0.5" value="2" placeholder="时长">
+            <span class="batch-ot-unit">h/天</span>
+        </div>
+        <div class="batch-ot-actions">
+            <button id="batchOtCancel" class="batch-ot-cancel">取消</button>
+            <button id="batchOtConfirm" class="batch-ot-confirm">确认登记</button>
+        </div>
+    </div>
+
+    <div class="schedule-banner" id="scheduleBanner" style="display:none;"></div>
 
     <div class="stats-card" id="todayStatsCard">
         <div class="stats-header">
@@ -72,12 +95,7 @@
         </div>
         <div class="shift-bar" id="shiftBar"></div>
         <div class="punch-count" id="punchCount">0 / 4</div>
-        <div class="stats-detail" id="todayDetail" style="display:none;">
-            <div class="detail-row" data-key="s1"><span class="detail-label">上午上班</span><span class="detail-value" id="d_s1">--:--:--</span><button class="detail-del" title="删除该次打卡">✕</button></div>
-            <div class="detail-row" data-key="e1"><span class="detail-label">上午下班</span><span class="detail-value" id="d_e1">--:--:--</span><button class="detail-del" title="删除该次打卡">✕</button></div>
-            <div class="detail-row" data-key="s2"><span class="detail-label">下午上班</span><span class="detail-value" id="d_s2">--:--:--</span><button class="detail-del" title="删除该次打卡">✕</button></div>
-            <div class="detail-row" data-key="e2"><span class="detail-label">下午下班</span><span class="detail-value" id="d_e2">--:--:--</span><button class="detail-del" title="删除该次打卡">✕</button></div>
-        </div>
+        <div class="stats-detail" id="todayDetail" style="display:none;"></div>
     </div>
 
         </div><!-- /tabPunch -->
@@ -85,20 +103,29 @@
         <!-- Tab 2：统计（本月/本周 + 图表） -->
         <div class="tab-panel" id="tabStats">
 
-            <!-- 统计概览：本月 / 本周（平均工时 / 打卡天数 / 总工时） -->
+            <!-- 月份切换（< 2026年9月 >） -->
+            <div class="month-switcher" id="statsMonthSwitcher">
+                <span class="ms-arrow" id="statsPrevMonth" title="上一月" role="button" aria-label="上一月">&#60;</span>
+                <span class="ms-title" id="statsMonthTitle">2026年 9月</span>
+                <span class="ms-arrow" id="statsNextMonth" title="下一月" role="button" aria-label="下一月">&#62;</span>
+            </div>
+
+            <!-- 统计概览：本月 / 本周（含加班时数） -->
             <div class="history-stats" style="margin:10px 14px 0;">
                 <div class="history-stats-col">
                     <div class="history-stats-title">📅 本月</div>
                     <div class="history-stats-row"><span>总工时</span><b id="tabMonthTotal">0.00</b><i>h</i></div>
                     <div class="history-stats-row"><span>打卡天数</span><b id="tabMonthDays">0</b><i>天</i></div>
                     <div class="history-stats-row"><span>月平均</span><b id="tabMonthAvg">0.00</b><i>h/天</i></div>
+                    <div class="history-stats-row history-stats-ot"><span>加班</span><b id="tabMonthOT">0.0</b><i>h</i></div>
                 </div>
                 <div class="history-stats-col">
                     <div class="history-stats-title">🗓️ 本周</div>
-                    <div class="history-stats-tip" id="tabWeekTip">点击日历某天可切换周</div>
+                    <div class="history-stats-tip" id="tabWeekTip">本周统计</div>
                     <div class="history-stats-row"><span>总工时</span><b id="tabWeekTotal">0.00</b><i>h</i></div>
                     <div class="history-stats-row"><span>打卡天数</span><b id="tabWeekDays">0</b><i>天</i></div>
                     <div class="history-stats-row"><span>周平均</span><b id="tabWeekAvg">0.00</b><i>h/天</i></div>
+                    <div class="history-stats-row history-stats-ot"><span>加班</span><b id="tabWeekOT">0.0</b><i>h</i></div>
                 </div>
             </div>
 
@@ -106,10 +133,6 @@
     <div class="chart-card" id="chartCard">
         <div class="chart-header">
             <span class="chart-title" id="chartTitle">📊 本月工时趋势</span>
-            <div class="chart-header-actions">
-                <span class="chart-toggle" id="chartToggle" title="切换图表类型">柱状图</span>
-                <span class="chart-export" id="chartExport" title="导出为 PNG 图片">⬇️PNG</span>
-            </div>
         </div>
         <div class="chart-range" id="chartRange">
             <span class="chart-range-opt selected" data-val="month">本月</span>
@@ -122,43 +145,155 @@
             <div class="chart-empty" id="chartEmpty" style="display:none;">该范围暂无打卡记录<br><span>完成打卡后将自动展示趋势图</span></div>
         </div>
         <div class="chart-legend">
-            <span class="chart-legend-item"><i style="background:var(--primary);"></i>每日工时(h)</span>
-            <span class="chart-legend-item"><i style="background:var(--success);"></i><span id="chartLegend达标">当日达标(≥6h)</span></span>
+            <span class="chart-legend-item"><i class="legend-bar"></i>每日工时(h)</span>
+            <span class="chart-legend-item"><i class="legend-line"></i>趋势线</span>
+            <span class="chart-legend-item"><i class="legend-target"></i>目标线(≥6h)</span>
         </div>
         <div class="chart-tooltip" id="chartTooltip"></div>
         <!-- 图表摘要（周报/月报：累计工时 + 环比 + 进度） -->
         <div class="chart-summary" id="chartSummary"></div>
         <!-- 自定义范围选择（内嵌，不弹窗） -->
         <div class="chart-custom" id="chartCustom" style="display:none;">
-            <input type="date" id="chartCustomStart">
+            <input type="date" id="chartCustomStart" aria-label="自定义起始日期">
             <span>至</span>
-            <input type="date" id="chartCustomEnd">
+            <input type="date" id="chartCustomEnd" aria-label="自定义结束日期">
             <button id="chartCustomApply">确定</button>
         </div>
     </div>
 
-    <!-- 每日打卡记录（由「设置」迁入统计 Tab，作为常驻区块） -->
+    <!-- 每日打卡记录（默认折叠，点标题展开） -->
     <div class="card-section" id="historySection">
-        <div class="card-section-header">
+        <div class="card-section-header cs-header" id="historyHeader" role="button" aria-expanded="false">
             <h3>📋 工时记录</h3>
-            <button class="card-section-refresh" id="historyRefreshBtn" title="刷新">🔄</button>
+            <span class="cs-arrow" id="historyArrow">▸</span>
         </div>
-
+        <div class="cs-body" id="historyBody" style="display:none;">
         <div class="history-filters">
-            <input type="date" id="historyStartDate">
-            <input type="date" id="historyEndDate">
+            <input type="date" id="historyStartDate" aria-label="查询起始日期">
+            <input type="date" id="historyEndDate" aria-label="查询结束日期">
             <button id="historyQueryBtn">查询</button>
         </div>
         <div class="history-list" id="historyList"></div>
+        </div><!-- /cs-body -->
+    </div>
+
+    <!-- 加班记录区块（默认折叠，点标题展开；标题括号显示区间加班时数） -->
+    <div class="card-section" id="overtimeSection">
+        <div class="card-section-header cs-header" id="otHeader" role="button" aria-expanded="false">
+            <h3>⏱️ 加班记录<span class="cs-hour" id="otSectionHour">(0.00 h)</span></h3>
+            <span class="cs-arrow" id="otArrow">▸</span>
+        </div>
+        <div class="cs-body" id="otBody" style="display:none;">
+            <!-- 本月加班总时数卡片（G1/G2/G3）：置于加班记录顶部，展开后可见；随顶部月份切换自动变化 -->
+            <div class="ot-summary-card" id="otSummaryCard">
+                <div class="ot-summary-header">
+                    <span class="ot-summary-title" id="otSummaryTitle">⏱️ 本月加班总时数</span>
+                    <b class="ot-summary-total" id="otSummaryTotal">0H</b>
+                </div>
+                <div class="ot-summary-row">
+                    <div class="ot-g" style="--c:#4a90e2;"><span class="ot-g-dot"></span><span class="ot-g-name">G1</span><b id="otG1">0H</b></div>
+                    <div class="ot-g" style="--c:#ff9500;"><span class="ot-g-dot"></span><span class="ot-g-name">G2</span><b id="otG2">0H</b></div>
+                    <div class="ot-g" style="--c:#ff3b30;"><span class="ot-g-dot"></span><span class="ot-g-name">G3</span><b id="otG3">0H</b></div>
+                </div>
+            </div>
+            <div class="record-list" id="otList"></div>
+        </div>
+    </div>
+
+    <!-- 请假/调休记录区块（默认折叠） -->
+    <div class="card-section" id="leaveSection">
+        <div class="card-section-header cs-header" id="leaveHeader" role="button" aria-expanded="false">
+            <h3>📝 请假调休记录<span class="cs-hour" id="leaveSectionHour">(0.00 h)</span></h3>
+            <span class="cs-arrow" id="leaveArrow">▸</span>
+        </div>
+        <div class="cs-body" id="leaveBody" style="display:none;">
+            <div class="record-list" id="leaveList"></div>
+        </div>
     </div>
 
         </div><!-- /tabStats -->
+
+        <!-- 工资 Tab 面板 -->
+        
+        <div class="tab-panel" id="tabSalary">
+        <div class="salary-card">
+        <div class="salary-head">
+        <div>
+        <div class="salary-title">本月工资</div>
+        <div class="salary-month" id="salaryMonth"></div>
+        </div>
+        <div class="salary-head-btns">
+        <button id="salarySettingsBtn" class="salary-settings-btn" type="button">⚙️ 设置</button>
+        </div>
+        </div>
+        <div class="salary-net">
+        <span class="salary-net-label">实发工资</span>
+        <span class="salary-net-val"><b id="salNet">0.00</b> 元</span>
+        </div>
+        <button id="salaryExpandBtn" class="salary-expand" type="button">展开明细 ▽</button>
+        <div class="salary-detail" id="salaryDetail">
+            <div class="sal-detail-section">
+                <div class="sal-detail-title">收入明细</div>
+                <div id="salIncomeDetail"></div>
+            </div>
+            <div class="sal-detail-section">
+                <div class="sal-detail-title">扣除明细</div>
+                <div id="salDeductAllDetail"></div>
+            </div>
+            <div class="sal-detail-section">
+                <div class="sal-detail-title">加班明细（时薪 = 底薪 ÷ 21.75 ÷ 8 = <span id="salHourly">0.00</span> 元/h）</div>
+                <div id="salOTDetail"></div>
+            </div>
+        </div>
+        <button id="salaryPayslipBtn" class="salary-expand" type="button" style="margin-top:12px;">📋 查看工资条</button>
+        </div>
+
+        <!-- 工资条（年度实发记录） -->
+        <div class="payslip-card" id="payslipCard" style="display:none;">
+            <div class="payslip-head">
+                <button id="payslipBackBtn" class="payslip-back-btn" type="button" aria-label="返回月薪">← 返回</button>
+                <div class="payslip-year-nav">
+                    <span class="payslip-arrow" id="payslipPrevYear" role="button">&#60;</span>
+                    <span class="payslip-year-title" id="payslipYearTitle">2026 年</span>
+                    <span class="payslip-arrow" id="payslipNextYear" role="button">&#62;</span>
+                </div>
+                <div class="payslip-archive-info" id="payslipArchiveInfo">已归档 <span id="payslipArchivedCount">0</span>/12 个月</div>
+            </div>
+            <div class="payslip-summary-row" style="display:flex;gap:10px;margin-bottom:16px;">
+                <div class="payslip-summary" style="flex:1;margin-bottom:0;">
+                    <div class="payslip-summary-title">年工资</div>
+                    <div class="payslip-summary-total"><span>¥</span><b id="payslipTotal">0.00</b></div>
+                    <div class="payslip-summary-grid">
+                        <div class="payslip-stat"><span class="payslip-stat-label">实发累计</span><span class="payslip-stat-val" id="payslipCumulative">¥0.00</span></div>
+                        <div class="payslip-stat"><span class="payslip-stat-label">年终奖</span><span class="payslip-stat-val" id="payslipBonus">¥0.00</span></div>
+                        <div class="payslip-stat"><span class="payslip-stat-label">月均</span><span class="payslip-stat-val" id="payslipAvg">¥0</span></div>
+                    </div>
+                </div>
+                <div class="payslip-history-card" style="flex:0 0 42%;background:linear-gradient(135deg,#34c759,#28a745);border-radius:12px;padding:18px 14px;color:#fff;display:flex;flex-direction:column;justify-content:center;">
+                    <div style="font-size:11px;opacity:.9;margin-bottom:4px;">历史总工资</div>
+                    <div style="font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;">¥<span id="payslipHistoryTotal">0.00</span></div>
+                    <div style="font-size:10px;opacity:.75;margin-top:6px;">所有年份合计</div>
+                </div>
+            </div>
+            <div class="payslip-months-title">12 个月份实发记录</div>
+            <div class="payslip-grid" id="payslipGrid"></div>
+            <div class="payslip-footer-tip">点击对应月份卡片即可录入或修正实发金额</div>
+            <!-- 年终奖输入 -->
+            <div class="payslip-bonus-section">
+                <div class="payslip-bonus-row">
+                    <span>年终奖金额</span>
+                    <input type="number" id="payslipBonusInput" min="0" step="100" value="0" placeholder="0">
+                    <button id="payslipBonusSave" class="payslip-bonus-save" type="button">保存</button>
+                </div>
+            </div>
+        </div>
+        </div>
     </div><!-- /tab-container -->
 
     <!-- 补卡弹窗 -->
     <div class="modal-mask" id="makeupModal">
         <div class="modal-content">
-            <div class="modal-header"><h3>补卡申请</h3><button class="modal-close" id="cancelMakeup">×</button></div>
+            <div class="modal-header"><h3>补卡申请</h3><button class="modal-close" id="cancelMakeup" aria-label="关闭">×</button></div>
             <div class="makeup-form">
                 <div><label>选择日期</label><input type="date" id="makeupDate"></div>
                 <div><label>打卡类型</label><select id="makeupType"></select></div>
@@ -174,11 +309,12 @@
     <!-- 设置弹窗 -->
     <div class="modal-mask" id="settingsModal">
         <div class="modal-content">
-            <div class="modal-header"><h3>设置</h3><button class="modal-close" id="closeSettingsBtn">×</button></div>
+            <div class="modal-header"><h3>设置</h3><button class="modal-close" id="closeSettingsBtn" aria-label="关闭">×</button></div>
             <div class="settings-group">
                 <div class="settings-group-title">显示与打卡偏好</div>
                 <ul class="settings-list">
                     <li id="openShiftSettingsItem">⏰ 自定义班别时间段</li>
+                    <li id="openScheduleItem">📆 排班周期规则配置<span id="scheduleStatusTag" class="settings-val">未启用</span></li>
                     <li id="calDefaultItem">📅 月历默认展开<span class="settings-switch" id="calDefaultSwitch" role="switch" aria-checked="false" tabindex="0"></span></li>
                 </ul>
             </div>
@@ -207,10 +343,11 @@
                 </ul>
             </div>
             <!-- 隐藏的文件选择器：用于从备份文件导入 -->
-            <input type="file" id="importFileInput" accept=".json,application/json" style="display:none;">
+            <input type="file" id="importFileInput" accept=".json,application/json" style="display:none;" aria-label="选择备份文件">
             <div class="settings-group">
                 <div class="settings-group-title">关于</div>
                 <ul class="settings-list">
+                    <li id="clearCacheItem">🧹 清除缓存并刷新<span class="settings-val" id="cacheVerVal">—</span></li>
                     <li id="openAboutItem">ℹ️ 关于 / 更新记录</li>
                 </ul>
             </div>
@@ -219,11 +356,36 @@
     </div>
 
 
+    <!-- 清空数据密码验证弹窗 -->
+    <div class="modal-mask" id="clearPasswordModal">
+        <div class="modal-content" style="max-width:320px;">
+            <div class="modal-header"><h3>🔒 密码验证</h3><button class="modal-close" id="clearPwdClose" aria-label="关闭">×</button></div>
+            <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">第3次确认：请输入清空密码以继续<br><span style="font-size:11px;color:#c7c7cc;">默认密码：1234</span></div>
+            <input type="password" id="clearPwdInput" placeholder="请输入密码" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;margin-bottom:12px;box-sizing:border-box;" aria-label="清空密码">
+            <div class="makeup-actions">
+                <button id="clearPwdCancel" style="background:#f2f2f7;color:#8e8e93;">取消</button>
+                <button id="clearPwdConfirm" style="background:var(--danger);color:#fff;">确认清空</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 删除确认弹窗 -->
+    <div class="modal-mask" id="confirmModal">
+        <div class="modal-content" style="max-width:340px;">
+            <div class="modal-header"><h3>确认删除</h3></div>
+            <div class="confirm-delete-msg" id="confirmMsg" style="font-size:14px;line-height:1.6;color:var(--text);padding:4px 2px 8px;"></div>
+            <div class="makeup-actions">
+                <button id="cancelDeleteBtn" style="background:#f2f2f7;color:#8e8e93;">取消</button>
+                <button id="confirmDeleteBtn" style="background:var(--danger);color:#fff;">确认删除</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 复制兜底文本框弹窗 -->
     <div class="modal-mask" id="copyFallbackModal">
         <div class="modal-content">
-            <div class="modal-header"><h3>请手动复制备份数据</h3><button class="modal-close" id="copyFallbackClose">×</button></div>
-            <textarea id="copyFallbackText" readonly style="width:100%;height:180px;resize:vertical;padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:12px;font-family:monospace;"></textarea>
+            <div class="modal-header"><h3>请手动复制备份数据</h3><button class="modal-close" id="copyFallbackClose" aria-label="关闭">×</button></div>
+            <textarea id="copyFallbackText" readonly style="width:100%;height:180px;resize:vertical;padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:12px;font-family:monospace;" aria-label="备份数据"></textarea>
             <div class="makeup-actions">
                 <button id="copyFallbackRetry">重试复制</button>
                 <button id="copyFallbackClose2">关闭</button>
@@ -234,7 +396,7 @@
     <!-- 自定义班别时间段弹窗 -->
     <div class="modal-mask" id="shiftSettingsModal">
         <div class="modal-content">
-            <div class="modal-header"><h3>自定义班别时间段</h3><button class="modal-close" id="shiftSettingsClose">×</button></div>
+            <div class="modal-header"><h3>自定义班别时间段</h3><button class="modal-close" id="shiftSettingsClose" aria-label="关闭">×</button></div>
             <div class="shift-settings-tip">修改后即时生效，并影响打卡时段校验与工时统计。</div>
             <div class="shift-block">
                 <div class="shift-block-title">☀️ 白班（两个打卡时段）</div>
@@ -269,10 +431,82 @@
         </div>
     </div>
 
+    <!-- 排班周期规则配置弹窗 -->
+    <div class="modal-mask" id="scheduleModal">
+        <div class="modal-content modal-content-lg">
+            <div class="modal-header">
+                <h3>📆 排班周期规则配置</h3>
+                <button class="modal-close" id="scheduleClose" aria-label="关闭">×</button>
+            </div>
+
+            <!-- 启用开关 -->
+            <div class="schedule-enable-row">
+                <div class="schedule-enable-text">
+                    <div class="schedule-enable-title">启用排班自动关联</div>
+                    <div class="schedule-enable-desc">开启后，切换日期自动对齐班别，日历标注班次</div>
+                </div>
+                <span class="settings-switch" id="scheduleEnableSwitch" role="switch" aria-checked="false" tabindex="0"></span>
+            </div>
+
+            <!-- 1. 预设模板 -->
+            <div class="schedule-section">
+                <div class="schedule-section-title">① 一键载入预设模板</div>
+                <div class="schedule-templates" id="scheduleTemplates"></div>
+            </div>
+
+            <!-- 2. 周期序列可视化编辑 -->
+            <div class="schedule-section">
+                <div class="schedule-section-title">② 自定义周期序列（点击卡片循环切换班次）</div>
+                <div class="schedule-cycle-cards" id="scheduleCycleCards"></div>
+                <div class="schedule-cycle-add">
+                    <button id="scheduleAddDay" class="schedule-add-btn" type="button">＋ 加1天</button>
+                    <span class="schedule-cycle-tip">周期长度 <b id="cycleLen">0</b> 天 · 点击卡片 ☀️→⛅→🌙→🛋️ 循环 · 右上角 🗑️ 删除</span>
+                </div>
+            </div>
+
+            <!-- 基准日 -->
+            <div class="schedule-section">
+                <div class="schedule-section-title">③ 周期基准日（该日对应序列第 1 天）</div>
+                <input type="date" id="scheduleBaseDate" class="schedule-base-date" aria-label="周期基准日">
+            </div>
+
+            <!-- 排班生效范围 -->
+            <div class="schedule-section">
+                <div class="schedule-section-title">④ 排班生效范围</div>
+                <div class="schedule-range-mode" id="scheduleRangeMode">
+                    <span class="schedule-range-opt selected" data-range="infinite">永久</span>
+                    <span class="schedule-range-opt" data-range="1w">一周</span>
+                    <span class="schedule-range-opt" data-range="2w">两周</span>
+                    <span class="schedule-range-opt" data-range="4w">四周</span>
+                    <span class="schedule-range-opt" data-range="custom">自定义</span>
+                </div>
+                <div class="schedule-range-custom" id="scheduleRangeCustom" style="display:none;">
+                    <input type="date" id="scheduleRangeStart" class="schedule-base-date" aria-label="生效起始日期" style="flex:1;">
+                    <span style="flex:none;padding:0 6px;color:var(--text-secondary);font-size:13px;">至</span>
+                    <input type="date" id="scheduleRangeEnd" class="schedule-base-date" aria-label="生效结束日期" style="flex:1;">
+                </div>
+            </div>
+
+            <!-- 5. 排班预览 -->
+            <div class="schedule-section">
+                <div class="schedule-section-title">⑤ 排班预览</div>
+                <div class="schedule-preview" id="schedulePreview"></div>
+            </div>
+
+            <div class="schedule-settings-actions">
+                <button id="scheduleReset" class="shift-btn-reset">恢复默认</button>
+                <div class="schedule-settings-actions-right">
+                    <button id="scheduleCancel" class="shift-btn-cancel">取消</button>
+                    <button id="scheduleConfirm" class="shift-btn-confirm">确认保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 关于 / 更新记录弹窗 -->
     <div class="modal-mask" id="aboutModal">
         <div class="modal-content">
-            <div class="modal-header"><h3>关于</h3><button class="modal-close" id="closeAboutBtn">×</button></div>
+            <div class="modal-header"><h3>关于</h3><button class="modal-close" id="closeAboutBtn" aria-label="关闭">×</button></div>
             <div class="about-app">
                 <div class="about-app-icon">📅</div>
                 <div class="about-app-name">工时记录</div>
@@ -286,16 +520,141 @@
         </div>
     </div>
     <!-- 底部 Tab 导航 -->
-    <div class="tabbar" id="tabbar">
-        <div class="tabbar-item active" id="tabBtnPunch" data-tab="tabPunch"><span class="tabbar-icon">📍</span><span class="tabbar-label">打卡</span></div>
-        <div class="tabbar-item" id="tabBtnStats" data-tab="tabStats"><span class="tabbar-icon">📊</span><span class="tabbar-label">统计</span></div>
+    <div class="tabbar" id="tabbar" role="tablist">
+        <div class="tabbar-item active" id="tabBtnPunch" data-tab="tabPunch" role="tab" aria-selected="true"><span class="tabbar-icon">📍</span><span class="tabbar-label">打卡</span></div>
+        <div class="tabbar-item" id="tabBtnStats" data-tab="tabStats" role="tab" aria-selected="false"><span class="tabbar-icon">📊</span><span class="tabbar-label">统计</span></div>
+        <div class="tabbar-item" id="tabBtnSalary" data-tab="tabSalary" role="tab" aria-selected="false"><span class="tabbar-icon">💰</span><span class="tabbar-label">工资</span></div>
+    </div>
+
+    
+
+    <!-- 加班登记弹窗 -->
+    <div class="modal-mask" id="overtimeModal">
+        <div class="modal-content">
+            <div class="modal-header"><h3 id="overtimeModalTitle">加班登记</h3><button class="modal-close" id="closeOvertimeBtn" aria-label="关闭">×</button></div>
+            <div class="makeup-form">
+                <div class="ot-date-row">
+                    <label>加班日期</label>
+                    <input type="date" id="otDate" aria-label="加班日期">  <!-- 存储真实日期值（submitOvertime 读取），由日历选中日自动填充 -->
+                    <b id="otDateLabel" class="ot-date-cn"></b>
+                </div>
+                <div>
+                    <label>加班类型</label>
+                    <select id="otType">
+                        <option value="normal">G1 · 平时加班（1.5 倍）</option>
+                        <option value="weekend">G2 · 周休日加班（2 倍）</option>
+                        <option value="holiday">G3 · 节假日加班（3 倍）</option>
+                    </select>
+                </div>
+                <div><label>加班时长（小时）</label><input type="number" id="otHours" min="0.1" step="0.5" value="2"></div>
+                <div class="makeup-actions">
+                    <button id="deleteOvertimeBtn" type="button" class="btn-danger">🗑️ 删除</button>
+                    <span class="makeup-actions-spacer"></span>
+                    <button id="cancelOvertimeBtn" class="btn-cancel">取消</button>
+                    <button id="confirmOvertimeBtn" class="btn-confirm">确认登记</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 请假/调休登记弹窗 -->
+    <div class="modal-mask" id="leaveModal">
+        <div class="modal-content">
+            <div class="modal-header"><h3 id="leaveModalTitle">请假 / 调休登记</h3><button class="modal-close" id="closeLeaveBtn" aria-label="关闭">×</button></div>
+            <div class="makeup-form">
+                <div>
+                    <label>类型</label>
+                    <select id="leaveType">
+                        <option value="personal" selected>事假</option>
+                        <option value="sick">病假</option>
+                        <option value="annual">年休假（不扣款）</option>
+                        <option value="other">其他</option>
+                    </select>
+                </div>
+                <div class="leave-unit-toggle">
+                    <span class="leave-unit-opt selected" data-unit="day">按天</span>
+                    <span class="leave-unit-opt" data-unit="hour">按小时</span>
+                </div>
+                <div id="leaveDayFields">
+                    <label>日期范围</label>
+                    <div class="history-filters" style="margin:0 0 4px;">
+                        <input type="date" id="leaveStart" aria-label="请假起始日期">
+                        <span style="flex:none;">至</span>
+                        <input type="date" id="leaveEnd" aria-label="请假结束日期">
+                    </div>
+                </div>
+                <div id="leaveHourFields" style="display:none;">
+                    <label>请假日期</label><input type="date" id="leaveHourDate" aria-label="请假日期">
+                    <label>请假时长（小时）</label><input type="number" id="leaveHours" min="0.1" step="0.5" value="1">
+                </div>
+                <div class="salary-hint">按天 = 每天 8 小时；扣款 = 时薪 × 请假小时数</div>
+                <div class="makeup-actions">
+                    <button id="deleteLeaveBtn" type="button" class="btn-danger">🗑️ 删除此记录</button>
+                    <span class="makeup-actions-spacer"></span>
+                    <button id="cancelLeaveBtn" class="btn-cancel">取消</button>
+                    <button id="confirmLeaveBtn" class="btn-confirm">确认登记</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 工资设置弹窗 -->
+    <div class="modal-mask" id="salarySettingsModal">
+        <div class="modal-content">
+            <div class="modal-header"><h3>工资设置</h3><button class="modal-close" id="closeSalarySettingsBtn" aria-label="关闭">×</button></div>
+            <div class="makeup-form">
+                <div><label>底薪（元/月）</label><input type="number" id="salBaseInput" min="0" step="100" value="6000"></div>
+                <div><label>每月计薪天数</label><input type="number" id="salWorkDaysInput" min="1" max="31" step="0.01" value="21.75"></div>
+                <div><label>社保（元/月）</label><input type="number" id="salSocialInput" min="0" step="50" value="400"></div>
+                <div><label>公积金（元/月）</label><input type="number" id="salHousingInput" min="0" step="50" value="200"></div>
+                <div><label>夜班补贴（元/班）</label><input type="number" id="salNightAllowanceInput" min="0" step="5" value="30"></div>
+                <div>
+                    <label>补贴明细</label>
+                    <div id="salSubsidyEditor" class="subsidy-editor"></div>
+                </div>
+                <div>
+                    <label>自定义扣款</label>
+                    <div id="salDeductEditor" class="subsidy-editor"></div>
+                </div>
+                <div class="salary-hint">时薪 = 底薪 ÷ 计薪天数 ÷ 8（每天 8 小时）</div>
+                <div class="makeup-actions">
+                    <button id="cancelSalarySettingsBtn" class="btn-cancel">取消</button>
+                    <button id="confirmSalarySettingsBtn" class="btn-confirm">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 工资条月份录入弹窗 -->
+    <div class="modal-mask" id="payslipMonthModal">
+        <div class="modal-content">
+            <div class="modal-header"><h3 id="payslipModalTitle">录入实发工资</h3><button class="modal-close" id="closePayslipMonth" aria-label="关闭">×</button></div>
+            <div class="makeup-form">
+                <div><label>月份</label><input type="text" id="payslipMonthLabel" readonly style="background:var(--input-bg);"></div>
+                <div><label>实发金额（元）</label><input type="number" id="payslipMonthAmount" min="0" step="0.01" placeholder="0.00"></div>
+                <div><label>备注（可选）</label><input type="text" id="payslipMonthNote" placeholder="如：含绩效奖" maxlength="50"></div>
+                <div class="makeup-actions">
+                    <button id="cancelPayslipMonth" class="btn-cancel">取消</button>
+                    <button id="confirmPayslipMonth" class="btn-confirm">保存</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Toast 容器：由 ensureToast 兜底创建，此处预置以加快首屏 -->
-    <div id="appToast" class="app-toast"></div>
+    <div id="appToast" class="app-toast" role="status" aria-live="polite"></div>
 </div>
 
-<script src="script.js"></script>
+<script src="js/01-core.js"></script>
+<script src="js/02-storage.js"></script>
+<script src="js/03-state.js"></script>
+<script src="js/04-calendar.js"></script>
+<script src="js/05-stats.js"></script>
+<script src="js/06-ot-leave.js"></script>
+<script src="js/07-salary.js"></script>
+<script src="js/08-ui.js"></script>
+<script src="js/10-schedule.js"></script>
+<script src="js/09-app.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
